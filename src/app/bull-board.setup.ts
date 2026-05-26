@@ -7,6 +7,8 @@ import { ItemsDetailsQueue } from './drivers/repositories/processBull/ItemsDetai
 import { ItemsVisitsQueue } from './drivers/repositories/processBull/itemsVisits/ItemsVisits.queue';
 import { MeliCategoriesQueue } from './drivers/repositories/processBull/categories/MeliCategories.queue';
 import { UpdateItemsDetailsQueue } from './drivers/repositories/processBull/ItemsDetail/updated/UpdatedDetailsJob.queue';
+import { MeliWebhookQueue } from './drivers/repositories/processBull/webhooks/MeliWebhook.queue';
+import { CatalogBackfillQueue } from './drivers/repositories/processBull/catalogBackfill/CatalogBackfill.queue';
 
 export function setupBullBoard(app: any) {
   const serverAdapter = new ExpressAdapter();
@@ -19,6 +21,8 @@ export function setupBullBoard(app: any) {
       new BullMQAdapter(ItemsVisitsQueue),
       new BullMQAdapter(MeliCategoriesQueue),
       new BullMQAdapter(UpdateItemsDetailsQueue),
+      new BullMQAdapter(MeliWebhookQueue),
+      new BullMQAdapter(CatalogBackfillQueue),
     ],
     serverAdapter,
   });

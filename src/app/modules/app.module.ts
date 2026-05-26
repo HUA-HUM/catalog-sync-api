@@ -1,23 +1,20 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { BullMQModule } from './BullMQ/BullMQ.module';
-import { ItemsIdBullModule } from './itemsId/ItemsIdBull.module';
-import { ItemsIdModule } from './itemsId/ItemsId.module';
-import { ItemsDetailsModule } from './itemsDetails/ItemsDetails.Module';
-import { ItemsVisitsModule } from './itemsVisits/ItemsVisits.Module';
-import { MeliCategoriesModule } from './categories/MeliCategories.Module';
-import { UpdateItemsDetailsModule } from './itemsDetails/updated/UpdateItemsDetails.Module';
+import { DatabaseModule } from './database/Database.module';
+import { CatalogPersistenceModule } from './catalogPersistence/CatalogPersistence.module';
+import { MeliWebhookModule } from './webhooks/MeliWebhook.module';
+import { CatalogBackfillModule } from './catalogBackfill/CatalogBackfill.module';
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    DatabaseModule,
+    CatalogPersistenceModule,
     BullMQModule,
-    ItemsIdModule,
-    ItemsDetailsModule,
-    ItemsVisitsModule,
-    MeliCategoriesModule,
-    UpdateItemsDetailsModule,
+    MeliWebhookModule,
+    CatalogBackfillModule,
   ],
 })
 export class AppModule {}
