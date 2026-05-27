@@ -82,7 +82,8 @@ export class ProcessCatalogBackfill {
           params: {
             useScan: true,
             limit: payload.limit,
-            scrollId,
+            offset: scrollId ? undefined : 0,
+            scrollId: scrollId || undefined,
           },
         },
       );
