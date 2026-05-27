@@ -72,9 +72,19 @@ export class ProcessCatalogBackfill {
     let page = 0;
     let processed = 0;
 
+    await this.logJob(
+      job,
+      `[scan] start run=${payload.runId} limit=${payload.limit} detailChunkSize=${payload.detailChunkSize} includeOrders=${payload.includeOrders} includeVisits=${payload.includeVisits}`,
+    );
+
     while (true) {
       if (payload.maxPages && page >= payload.maxPages) break;
       if (payload.maxItems && processed >= payload.maxItems) break;
+
+      await this.logJob(
+        job,
+        `[scan] fetching page=${page + 1} scrollId=${scrollId ?? 'initial'}`,
+      );
 
       const response = await this.getFromMeliWithRetry<ScanProductsResponse>(
         '/mercadolibre/products',
@@ -90,7 +100,10 @@ export class ProcessCatalogBackfill {
 
       sellerId = response.seller_id;
       const items = response.items ?? [];
-      if (!items.length) break;
+      if (!items.length) {
+        await this.logJob(job, `[scan] no more items page=${page + 1}`);
+        break;
+      }
 
       const remaining = payload.maxItems
         ? Math.max(payload.maxItems - processed, 0)
@@ -102,7 +115,14 @@ export class ProcessCatalogBackfill {
         itemIds: pageItems,
       });
 
-      for (const chunk of this.chunk(pageItems, payload.detailChunkSize)) {
+      const chunks = this.chunk(pageItems, payload.detailChunkSize);
+
+      await this.logJob(
+        job,
+        `[scan] page=${page + 1} seller=${sellerId} received=${items.length} savedPending=${pageItems.length} chunks=${chunks.length} totalProcessed=${processed + pageItems.length} total=${response.pagination?.total ?? 'unknown'}`,
+      );
+
+      for (const chunk of chunks) {
         await CatalogBackfillQueue.add(
           CatalogBackfillJobs.SYNC_DETAILS_CHUNK,
           {
@@ -135,12 +155,22 @@ export class ProcessCatalogBackfill {
       if (!scrollId || response.pagination?.has_next === false) break;
       if (payload.maxItems && processed >= payload.maxItems) break;
     }
+
+    await this.logJob(
+      job,
+      `[scan] done run=${payload.runId} pages=${page} processed=${processed}`,
+    );
   }
 
   private async syncDetailsChunk(
     job: Job<CatalogBackfillDetailsPayload>,
   ): Promise<void> {
     const payload = job.data;
+
+    await this.logJob(
+      job,
+      `[details] start run=${payload.runId} items=${payload.itemIds.length} first=${payload.itemIds[0]}`,
+    );
 
     const products = await this.getFromMeliWithRetry<MeliBulkProduct[]>(
       '/meli/products/bulk',
@@ -152,6 +182,14 @@ export class ProcessCatalogBackfill {
     );
 
     await this.catalogRepository.upsertProducts(products);
+
+    await this.logJob(
+      job,
+      `[details] saved products=${products.length} requested=${payload.itemIds.length}`,
+    );
+
+    let ordersJobs = 0;
+    let visitsJobs = 0;
 
     for (const product of products) {
       if (payload.includeOrders && Number(product.soldQuantity ?? 0) > 0) {
@@ -172,6 +210,7 @@ export class ProcessCatalogBackfill {
             removeOnFail: false,
           },
         );
+        ordersJobs++;
       }
 
       if (payload.includeVisits) {
@@ -190,8 +229,14 @@ export class ProcessCatalogBackfill {
             removeOnFail: false,
           },
         );
+        visitsJobs++;
       }
     }
+
+    await this.logJob(
+      job,
+      `[details] done products=${products.length} queuedOrders=${ordersJobs} queuedVisits=${visitsJobs}`,
+    );
 
     await job.updateProgress(100);
   }
@@ -202,6 +247,12 @@ export class ProcessCatalogBackfill {
     const payload = job.data;
     let offset = 0;
     let total = 0;
+    let saved = 0;
+
+    await this.logJob(
+      job,
+      `[orders] start item=${payload.itemId} status=${payload.status}`,
+    );
 
     while (true) {
       const response = await this.getFromMeliWithRetry<MeliProductOrdersResponse>(
@@ -223,18 +274,31 @@ export class ProcessCatalogBackfill {
         orders,
       });
 
+      saved += orders.length;
       total = response.paging?.total ?? total;
       offset += response.paging?.limit ?? payload.limit;
       await job.updateProgress({ offset, total });
 
+      await this.logJob(
+        job,
+        `[orders] item=${payload.itemId} savedPage=${orders.length} savedTotal=${saved} offset=${offset} total=${total}`,
+      );
+
       if (!response.paging?.total || offset >= response.paging.total) break;
     }
+
+    await this.logJob(
+      job,
+      `[orders] done item=${payload.itemId} saved=${saved} total=${total}`,
+    );
   }
 
   private async syncVisitsForItem(
     job: Job<CatalogBackfillVisitsPayload>,
   ): Promise<void> {
     const payload = job.data;
+
+    await this.logJob(job, `[visits] start item=${payload.itemId}`);
 
     const visit = await this.getFromMeliWithRetry<{
       item_id: string;
@@ -245,6 +309,11 @@ export class ProcessCatalogBackfill {
       sellerId: payload.sellerId,
       visit,
     });
+
+    await this.logJob(
+      job,
+      `[visits] done item=${payload.itemId} total=${visit.total}`,
+    );
 
     await job.updateProgress(100);
   }
@@ -286,5 +355,14 @@ export class ProcessCatalogBackfill {
 
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private async logJob(
+    job: Job<CatalogBackfillPayload>,
+    message: string,
+  ): Promise<void> {
+    const logMessage = `[CatalogBackfill] ${message}`;
+    console.log(logMessage);
+    await job.log(logMessage);
   }
 }
