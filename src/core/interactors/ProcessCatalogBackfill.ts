@@ -76,7 +76,7 @@ export class ProcessCatalogBackfill {
       if (payload.maxPages && page >= payload.maxPages) break;
       if (payload.maxItems && processed >= payload.maxItems) break;
 
-      const response = await this.meliHttpClient.get<ScanProductsResponse>(
+      const response = await this.getFromMeliWithRetry<ScanProductsResponse>(
         '/mercadolibre/products',
         {
           params: {
@@ -142,7 +142,7 @@ export class ProcessCatalogBackfill {
   ): Promise<void> {
     const payload = job.data;
 
-    const products = await this.meliHttpClient.get<MeliBulkProduct[]>(
+    const products = await this.getFromMeliWithRetry<MeliBulkProduct[]>(
       '/meli/products/bulk',
       {
         params: {
@@ -204,7 +204,7 @@ export class ProcessCatalogBackfill {
     let total = 0;
 
     while (true) {
-      const response = await this.meliHttpClient.get<MeliProductOrdersResponse>(
+      const response = await this.getFromMeliWithRetry<MeliProductOrdersResponse>(
         `/meli/products/${payload.itemId}/orders`,
         {
           params: {
@@ -236,7 +236,7 @@ export class ProcessCatalogBackfill {
   ): Promise<void> {
     const payload = job.data;
 
-    const visit = await this.meliHttpClient.get<{
+    const visit = await this.getFromMeliWithRetry<{
       item_id: string;
       total: number;
     }>(`/meli/items/${payload.itemId}/visits`);
@@ -255,5 +255,36 @@ export class ProcessCatalogBackfill {
       chunks.push(items.slice(i, i + size));
     }
     return chunks;
+  }
+
+  private async getFromMeliWithRetry<T>(
+    url: string,
+    config?: Parameters<IMeliHttpClient['get']>[1],
+  ): Promise<T> {
+    const maxAttempts = 4;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await this.meliHttpClient.get<T>(url, config);
+      } catch (error) {
+        if (attempt >= maxAttempts) {
+          throw error;
+        }
+
+        const delayMs = attempt >= 3 ? 20000 : 5000;
+
+        console.warn(
+          `[ProcessCatalogBackfill] Meli request failed | url=${url} | attempt=${attempt}/${maxAttempts} | retry_in_ms=${delayMs}`,
+        );
+
+        await this.sleep(delayMs);
+      }
+    }
+
+    throw new Error(`Meli request failed without explicit error: ${url}`);
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
