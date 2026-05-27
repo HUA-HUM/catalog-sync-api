@@ -32,7 +32,7 @@ export class CatalogBackfillController {
   @ApiBody({
     schema: {
       example: {
-        limit: 100,
+        limit: 50,
         detailChunkSize: 50,
         maxPages: 2,
         includeOrders: true,

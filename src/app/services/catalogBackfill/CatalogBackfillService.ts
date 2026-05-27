@@ -40,7 +40,7 @@ export class CatalogBackfillService {
     includeVisits?: boolean;
   }) {
     const runId = `catalog-backfill-${Date.now()}`;
-    const limit = params.limit ?? 100;
+    const limit = params.limit ?? 50;
     const detailChunkSize = params.detailChunkSize ?? 50;
 
     if (limit <= 0 || limit > 100) {
@@ -101,7 +101,8 @@ export class CatalogBackfillService {
         params: {
           useScan: true,
           limit,
-          scrollId: params.scrollId,
+          offset: params.scrollId ? undefined : 0,
+          scrollId: params.scrollId || undefined,
         },
       },
     );
