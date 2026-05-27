@@ -94,6 +94,7 @@ export class ProcessCatalogBackfill {
             limit: payload.limit,
             offset: scrollId ? undefined : 0,
             scrollId: scrollId || undefined,
+            scroll_id: scrollId || undefined,
           },
         },
       );
@@ -145,12 +146,27 @@ export class ProcessCatalogBackfill {
       processed += pageItems.length;
       page++;
       scrollId = response.scroll_id;
+      const total = response.pagination?.total;
+      const reachedRequestedLimit =
+        Boolean(payload.maxItems && processed >= payload.maxItems) ||
+        Boolean(payload.maxPages && page >= payload.maxPages);
 
       await job.updateProgress({
         pages: page,
         processed,
-        total: response.pagination?.total,
+        total,
       });
+
+      if (
+        !reachedRequestedLimit &&
+        total &&
+        processed < total &&
+        (!scrollId || response.pagination?.has_next === false)
+      ) {
+        throw new Error(
+          `Scan stopped early: processed=${processed} total=${total} hasNext=${response.pagination?.has_next} scrollId=${scrollId ?? 'missing'}`,
+        );
+      }
 
       if (!scrollId || response.pagination?.has_next === false) break;
       if (payload.maxItems && processed >= payload.maxItems) break;

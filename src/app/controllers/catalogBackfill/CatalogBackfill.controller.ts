@@ -34,7 +34,6 @@ export class CatalogBackfillController {
       example: {
         limit: 50,
         detailChunkSize: 50,
-        maxPages: 2,
         includeOrders: true,
         includeVisits: true,
       },

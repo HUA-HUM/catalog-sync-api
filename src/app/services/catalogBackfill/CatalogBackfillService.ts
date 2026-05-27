@@ -103,6 +103,7 @@ export class CatalogBackfillService {
           limit,
           offset: params.scrollId ? undefined : 0,
           scrollId: params.scrollId || undefined,
+          scroll_id: params.scrollId || undefined,
         },
       },
     );
