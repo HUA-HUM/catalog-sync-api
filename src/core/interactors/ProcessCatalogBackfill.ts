@@ -188,14 +188,33 @@ export class ProcessCatalogBackfill {
       `[details] start run=${payload.runId} items=${payload.itemIds.length} first=${payload.itemIds[0]}`,
     );
 
-    const products = await this.getFromMeliWithRetry<MeliBulkProduct[]>(
-      '/meli/products/bulk',
-      {
-        params: {
-          ids: payload.itemIds.join(','),
+    const products: MeliBulkProduct[] = [];
+    const bulkChunks = this.chunk(payload.itemIds, 20);
+
+    for (const bulkChunk of bulkChunks) {
+      const chunkProducts = await this.getFromMeliWithRetry<MeliBulkProduct[]>(
+        '/meli/products/bulk',
+        {
+          params: {
+            ids: bulkChunk.join(','),
+          },
         },
-      },
-    );
+      );
+
+      if (bulkChunk.length > 0 && chunkProducts.length === 0) {
+        throw new Error(
+          `Bulk details returned 0 products for ${bulkChunk.length} requested ids. first=${bulkChunk[0]}`,
+        );
+      }
+
+      products.push(...chunkProducts);
+    }
+
+    if (payload.itemIds.length > 0 && products.length === 0) {
+      throw new Error(
+        `Bulk details returned 0 products for ${payload.itemIds.length} requested ids. first=${payload.itemIds[0]}`,
+      );
+    }
 
     await this.catalogRepository.upsertProducts(products);
 
