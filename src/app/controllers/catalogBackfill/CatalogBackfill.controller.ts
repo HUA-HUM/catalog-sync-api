@@ -49,7 +49,7 @@ export class CatalogBackfillController {
     schema: {
       example: {
         limit: 50,
-        detailChunkSize: 50,
+        detailChunkSize: 20,
         includeOrders: true,
         includeVisits: true,
       },
@@ -66,7 +66,7 @@ export class CatalogBackfillController {
   @ApiBody({
     schema: {
       example: {
-        detailChunkSize: 50,
+        detailChunkSize: 20,
         includeOrders: true,
         includeVisits: false,
       },

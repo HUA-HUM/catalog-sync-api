@@ -47,8 +47,8 @@ export class CatalogBackfillService {
       throw new BadRequestException('limit must be between 1 and 100');
     }
 
-    if (detailChunkSize <= 0 || detailChunkSize > 100) {
-      throw new BadRequestException('detailChunkSize must be between 1 and 100');
+    if (detailChunkSize <= 0 || detailChunkSize > 20) {
+      throw new BadRequestException('detailChunkSize must be between 1 and 20');
     }
 
     const job = await CatalogBackfillQueue.add(
@@ -99,8 +99,8 @@ export class CatalogBackfillService {
 
     this.validateOptionalLimit(params.limit);
 
-    if (detailChunkSize <= 0 || detailChunkSize > 100) {
-      throw new BadRequestException('detailChunkSize must be between 1 and 100');
+    if (detailChunkSize <= 0 || detailChunkSize > 20) {
+      throw new BadRequestException('detailChunkSize must be between 1 and 20');
     }
 
     const items = await this.catalogRepository.findItemsMissingDetails(
