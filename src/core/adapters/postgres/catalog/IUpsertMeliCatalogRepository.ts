@@ -86,4 +86,22 @@ export interface IUpsertMeliCatalogRepository {
     sellerId: number | string;
     itemIds: string[];
   }): Promise<void>;
+  findItemsMissingDetails(limit?: number): Promise<
+    {
+      sellerId: number;
+      itemId: string;
+    }[]
+  >;
+  findItemsForOrders(limit?: number): Promise<
+    {
+      sellerId: number;
+      itemId: string;
+    }[]
+  >;
+  findItemsForVisits(limit?: number): Promise<
+    {
+      sellerId: number;
+      itemId: string;
+    }[]
+  >;
 }

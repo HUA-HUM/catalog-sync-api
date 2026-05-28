@@ -34,6 +34,92 @@ export class PostgresMeliCatalogRepository
     );
   }
 
+  async findItemsMissingDetails(limit?: number): Promise<
+    {
+      sellerId: number;
+      itemId: string;
+    }[]
+  > {
+    const result = await this.pool.query<{
+      seller_id: number;
+      item_id: string;
+    }>(
+      `
+      SELECT i.seller_id, i.item_id
+      FROM meli_items i
+      LEFT JOIN meli_item_details d
+        ON d.seller_id = i.seller_id
+       AND d.item_id = i.item_id
+      WHERE d.item_id IS NULL
+      ORDER BY i.created_at ASC, i.item_id ASC
+      ${limit ? 'LIMIT $1' : ''}
+      `,
+      limit ? [limit] : [],
+    );
+
+    return result.rows.map((row) => ({
+      sellerId: Number(row.seller_id),
+      itemId: row.item_id,
+    }));
+  }
+
+  async findItemsForOrders(limit?: number): Promise<
+    {
+      sellerId: number;
+      itemId: string;
+    }[]
+  > {
+    const result = await this.pool.query<{
+      seller_id: number;
+      item_id: string;
+    }>(
+      `
+      SELECT i.seller_id, i.item_id
+      FROM meli_items i
+      WHERE i.sync_status = 'synced'
+        AND COALESCE(i.sold_quantity, 0) > 0
+      ORDER BY i.last_synced_at ASC NULLS FIRST, i.item_id ASC
+      ${limit ? 'LIMIT $1' : ''}
+      `,
+      limit ? [limit] : [],
+    );
+
+    return result.rows.map((row) => ({
+      sellerId: Number(row.seller_id),
+      itemId: row.item_id,
+    }));
+  }
+
+  async findItemsForVisits(limit?: number): Promise<
+    {
+      sellerId: number;
+      itemId: string;
+    }[]
+  > {
+    const result = await this.pool.query<{
+      seller_id: number;
+      item_id: string;
+    }>(
+      `
+      SELECT i.seller_id, i.item_id
+      FROM meli_items i
+      LEFT JOIN meli_item_visits_current v
+        ON v.seller_id = i.seller_id
+       AND v.item_id = i.item_id
+      WHERE i.sync_status = 'synced'
+        AND v.item_id IS NULL
+      ORDER BY i.last_synced_at ASC NULLS FIRST, i.item_id ASC
+      ${limit ? 'LIMIT $1' : ''}
+      `,
+      limit ? [limit] : [],
+    );
+
+    return result.rows.map((row) => ({
+      sellerId: Number(row.seller_id),
+      itemId: row.item_id,
+    }));
+  }
+
   async upsertProducts(products: MeliBulkProduct[]): Promise<void> {
     if (!products.length) return;
 

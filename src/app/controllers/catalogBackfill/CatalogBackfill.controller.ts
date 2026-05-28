@@ -20,6 +20,22 @@ class StartCatalogBackfillDto {
   includeVisits?: boolean;
 }
 
+class ResumeDetailsDto {
+  limit?: number;
+  detailChunkSize?: number;
+  includeOrders?: boolean;
+  includeVisits?: boolean;
+}
+
+class ResumeOrdersDto {
+  limit?: number;
+  orderPageLimit?: number;
+}
+
+class ResumeVisitsDto {
+  limit?: number;
+}
+
 @ApiTags('Internal - Catalog Backfill')
 @Controller('internal/catalog-backfill')
 export class CatalogBackfillController {
@@ -41,6 +57,61 @@ export class CatalogBackfillController {
   })
   start(@Body() body: StartCatalogBackfillDto) {
     return this.service.startFullBackfill(body);
+  }
+
+  @Post('details/resume-missing')
+  @ApiOperation({
+    summary: 'Encola detalles para MLAs que ya estan en Postgres pero no tienen detalle',
+  })
+  @ApiBody({
+    schema: {
+      example: {
+        detailChunkSize: 50,
+        includeOrders: true,
+        includeVisits: false,
+      },
+    },
+  })
+  resumeMissingDetails(@Body() body: ResumeDetailsDto) {
+    return this.service.enqueueMissingDetails({
+      limit: body.limit,
+      detailChunkSize: body.detailChunkSize,
+      includeOrders: body.includeOrders,
+      includeVisits: body.includeVisits,
+    });
+  }
+
+  @Post('orders/resume')
+  @ApiOperation({
+    summary: 'Encola ordenes para productos sincronizados con ventas',
+  })
+  @ApiBody({
+    schema: {
+      example: {
+        orderPageLimit: 50,
+      },
+    },
+  })
+  resumeOrders(@Body() body: ResumeOrdersDto) {
+    return this.service.enqueueOrders({
+      limit: body.limit,
+      orderPageLimit: body.orderPageLimit,
+    });
+  }
+
+  @Post('visits/resume-missing')
+  @ApiOperation({
+    summary: 'Encola visitas para productos sincronizados sin visitas guardadas',
+  })
+  @ApiBody({
+    schema: {
+      example: {},
+    },
+  })
+  resumeMissingVisits(@Body() body: ResumeVisitsDto) {
+    return this.service.enqueueMissingVisits({
+      limit: body.limit,
+    });
   }
 
   @Post('items/scan-page')
