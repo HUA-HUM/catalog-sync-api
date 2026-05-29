@@ -4,6 +4,7 @@ import {
   MeliWebhookPayload,
   MeliWebhookQueue,
 } from 'src/app/drivers/repositories/processBull/webhooks/MeliWebhook.queue';
+import { MeliWebhookLogger } from 'src/app/drivers/repositories/processBull/webhooks/MeliWebhook.logger';
 
 @Injectable()
 export class MeliWebhookService {
@@ -19,6 +20,10 @@ export class MeliWebhookService {
       receivedAt: new Date().toISOString(),
       raw: body,
     };
+
+    MeliWebhookLogger.received(
+      `topic=${payload.topic} resource=${payload.resource} user=${payload.user_id ?? 'unknown'}`,
+    );
 
     const job = await MeliWebhookQueue.add(
       MeliWebhookJobs.PROCESS_NOTIFICATION,

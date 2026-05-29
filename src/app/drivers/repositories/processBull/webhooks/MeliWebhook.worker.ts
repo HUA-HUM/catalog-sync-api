@@ -6,6 +6,7 @@ import {
   MeliWebhookJobs,
   MeliWebhookPayload,
 } from './MeliWebhook.queue';
+import { MeliWebhookLogger } from './MeliWebhook.logger';
 
 export function startMeliWebhookWorker(
   interactor: ProcessMeliWebhookNotification,
@@ -14,10 +15,13 @@ export function startMeliWebhookWorker(
     MELI_WEBHOOK_QUEUE_NAME,
     async (job: Job<MeliWebhookPayload>) => {
       if (job.name !== MeliWebhookJobs.PROCESS_NOTIFICATION) {
-        console.log('Unknown Meli webhook job:', job.name);
+        MeliWebhookLogger.processing(`unknown job=${job.name}`);
         return;
       }
 
+      MeliWebhookLogger.processing(
+        `start job=${job.id} topic=${job.data.topic} resource=${job.data.resource}`,
+      );
       await interactor.execute(job.data);
     },
     {
@@ -27,15 +31,15 @@ export function startMeliWebhookWorker(
   );
 
   worker.on('completed', (job) => {
-    console.log(`Meli webhook job completed: ${job.id}`);
+    MeliWebhookLogger.processing(`completed job=${job.id}`);
   });
 
   worker.on('failed', (job, err) => {
-    console.error(`Meli webhook job failed: ${job?.id}`, err);
+    MeliWebhookLogger.error(`failed job=${job?.id}`, err);
   });
 
   worker.on('error', (err) => {
-    console.error('Meli webhook worker error:', err);
+    MeliWebhookLogger.error('worker error', err);
   });
 
   return worker;
