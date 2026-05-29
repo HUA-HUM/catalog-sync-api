@@ -7,6 +7,7 @@ import {
   CatalogBackfillPayload,
   CatalogBackfillQueue,
   CatalogBackfillScanPayload,
+  CatalogBackfillVisitsRefreshPayload,
   CatalogBackfillVisitsPayload,
 } from 'src/app/drivers/repositories/processBull/catalogBackfill/CatalogBackfill.queue';
 import type { IMeliHttpClient } from 'src/core/adapters/mercadolibre-api/http/IMeliHttpClient';
@@ -59,6 +60,11 @@ export class ProcessCatalogBackfill {
         return;
       case CatalogBackfillJobs.SYNC_VISITS_FOR_ITEM:
         await this.syncVisitsForItem(job as Job<CatalogBackfillVisitsPayload>);
+        return;
+      case CatalogBackfillJobs.ENQUEUE_VISITS_REFRESH:
+        await this.enqueueVisitsRefresh(
+          job as Job<CatalogBackfillVisitsRefreshPayload>,
+        );
         return;
       default:
         console.log(`[ProcessCatalogBackfill] Unknown job ${job.name}`);
@@ -351,6 +357,44 @@ export class ProcessCatalogBackfill {
     );
 
     await job.updateProgress(100);
+  }
+
+  private async enqueueVisitsRefresh(
+    job: Job<CatalogBackfillVisitsRefreshPayload>,
+  ): Promise<void> {
+    const payload = job.data;
+    const items = await this.catalogRepository.findItemsForVisitsRefresh({
+      staleAfterDays: payload.staleAfterDays,
+      limit: payload.limit,
+    });
+
+    await this.logJob(
+      job,
+      `[visits-refresh] staleAfterDays=${payload.staleAfterDays} selected=${items.length} limit=${payload.limit ?? 'none'}`,
+    );
+
+    for (const item of items) {
+      await CatalogBackfillQueue.add(
+        CatalogBackfillJobs.SYNC_VISITS_FOR_ITEM,
+        {
+          runId: payload.runId,
+          sellerId: item.sellerId,
+          itemId: item.itemId,
+        },
+        {
+          jobId: `visits-refresh-${item.itemId}`,
+          attempts: 5,
+          backoff: { type: 'exponential', delay: 5000 },
+          removeOnComplete: true,
+          removeOnFail: false,
+        },
+      );
+    }
+
+    await this.logJob(
+      job,
+      `[visits-refresh] queuedVisits=${items.length}`,
+    );
   }
 
   private chunk<T>(items: T[], size: number): T[][] {

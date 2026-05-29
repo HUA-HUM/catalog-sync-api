@@ -19,9 +19,13 @@ import { ProcessCatalogBackfill } from 'src/core/interactors/ProcessCatalogBackf
   ],
 })
 export class CatalogBackfillModule implements OnModuleInit {
-  constructor(private readonly processCatalogBackfill: ProcessCatalogBackfill) {}
+  constructor(
+    private readonly processCatalogBackfill: ProcessCatalogBackfill,
+    private readonly catalogBackfillService: CatalogBackfillService,
+  ) {}
 
-  onModuleInit() {
+  async onModuleInit() {
     startCatalogBackfillWorker(this.processCatalogBackfill);
+    await this.catalogBackfillService.ensureRecurringVisitsRefresh();
   }
 }

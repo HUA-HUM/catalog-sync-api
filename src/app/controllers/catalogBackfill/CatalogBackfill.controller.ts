@@ -36,6 +36,11 @@ class ResumeVisitsDto {
   limit?: number;
 }
 
+class RefreshVisitsDto {
+  staleAfterDays?: number;
+  limit?: number;
+}
+
 @ApiTags('Internal - Catalog Backfill')
 @Controller('internal/catalog-backfill')
 export class CatalogBackfillController {
@@ -110,6 +115,25 @@ export class CatalogBackfillController {
   })
   resumeMissingVisits(@Body() body: ResumeVisitsDto) {
     return this.service.enqueueMissingVisits({
+      limit: body.limit,
+    });
+  }
+
+  @Post('visits/refresh')
+  @ApiOperation({
+    summary: 'Encola visitas faltantes o vencidas por antiguedad',
+  })
+  @ApiBody({
+    schema: {
+      example: {
+        staleAfterDays: 4,
+        limit: 50000,
+      },
+    },
+  })
+  refreshVisits(@Body() body: RefreshVisitsDto) {
+    return this.service.enqueueVisitsRefresh({
+      staleAfterDays: body.staleAfterDays,
       limit: body.limit,
     });
   }
