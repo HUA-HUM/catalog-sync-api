@@ -120,6 +120,49 @@ export class PostgresMeliCatalogRepository
     }));
   }
 
+  async findItemsForVisitsRefresh(params: {
+    staleAfterDays: number;
+    limit?: number;
+  }): Promise<
+    {
+      sellerId: number;
+      itemId: string;
+    }[]
+  > {
+    const values: unknown[] = [params.staleAfterDays];
+    const limitSql = params.limit ? 'LIMIT $2' : '';
+
+    if (params.limit) {
+      values.push(params.limit);
+    }
+
+    const result = await this.pool.query<{
+      seller_id: number;
+      item_id: string;
+    }>(
+      `
+      SELECT i.seller_id, i.item_id
+      FROM meli_items i
+      LEFT JOIN meli_item_visits_current v
+        ON v.seller_id = i.seller_id
+       AND v.item_id = i.item_id
+      WHERE i.sync_status = 'synced'
+        AND (
+          v.item_id IS NULL
+          OR v.captured_at <= now() - ($1::int * interval '1 day')
+        )
+      ORDER BY v.captured_at ASC NULLS FIRST, i.item_id ASC
+      ${limitSql}
+      `,
+      values,
+    );
+
+    return result.rows.map((row) => ({
+      sellerId: Number(row.seller_id),
+      itemId: row.item_id,
+    }));
+  }
+
   async upsertProducts(products: MeliBulkProduct[]): Promise<void> {
     if (!products.length) return;
 

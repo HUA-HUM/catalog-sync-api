@@ -8,6 +8,7 @@ export enum CatalogBackfillJobs {
   SYNC_DETAILS_CHUNK = 'sync-details-chunk',
   SYNC_ORDERS_FOR_ITEM = 'sync-orders-for-item',
   SYNC_VISITS_FOR_ITEM = 'sync-visits-for-item',
+  ENQUEUE_VISITS_REFRESH = 'enqueue-visits-refresh',
 }
 
 export type CatalogBackfillScanPayload = {
@@ -42,11 +43,18 @@ export type CatalogBackfillVisitsPayload = {
   itemId: string;
 };
 
+export type CatalogBackfillVisitsRefreshPayload = {
+  runId: string;
+  staleAfterDays: number;
+  limit?: number;
+};
+
 export type CatalogBackfillPayload =
   | CatalogBackfillScanPayload
   | CatalogBackfillDetailsPayload
   | CatalogBackfillOrdersPayload
-  | CatalogBackfillVisitsPayload;
+  | CatalogBackfillVisitsPayload
+  | CatalogBackfillVisitsRefreshPayload;
 
 export const CatalogBackfillQueue = new Queue<CatalogBackfillPayload>(
   CATALOG_BACKFILL_QUEUE_NAME,

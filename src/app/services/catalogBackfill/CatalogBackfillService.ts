@@ -216,6 +216,76 @@ export class CatalogBackfillService {
     };
   }
 
+  async enqueueVisitsRefresh(params: {
+    staleAfterDays?: number;
+    limit?: number;
+  }) {
+    const runId = `catalog-visits-refresh-${Date.now()}`;
+    const staleAfterDays = params.staleAfterDays ?? 4;
+
+    this.validateOptionalLimit(params.limit);
+
+    if (staleAfterDays <= 0) {
+      throw new BadRequestException('staleAfterDays must be greater than 0');
+    }
+
+    const job = await CatalogBackfillQueue.add(
+      CatalogBackfillJobs.ENQUEUE_VISITS_REFRESH,
+      {
+        runId,
+        staleAfterDays,
+        limit: params.limit,
+      },
+      {
+        jobId: `${runId}-enqueue`,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+        removeOnComplete: true,
+        removeOnFail: false,
+      },
+    );
+
+    return {
+      status: 'queued',
+      run_id: runId,
+      job_id: job.id,
+      queue: 'catalog-backfill',
+      stale_after_days: staleAfterDays,
+      limit: params.limit,
+    };
+  }
+
+  async ensureRecurringVisitsRefresh() {
+    if (process.env.VISITS_REFRESH_ENABLED !== 'true') {
+      return;
+    }
+
+    const staleAfterDays = Number(process.env.VISITS_REFRESH_STALE_DAYS ?? 4);
+    const limit = Number(process.env.VISITS_REFRESH_BATCH_SIZE ?? 50000);
+    const everyMs = Number(
+      process.env.VISITS_REFRESH_SCHEDULER_EVERY_MS ?? 60 * 60 * 1000,
+    );
+
+    await CatalogBackfillQueue.add(
+      CatalogBackfillJobs.ENQUEUE_VISITS_REFRESH,
+      {
+        runId: 'catalog-visits-refresh-recurring',
+        staleAfterDays,
+        limit,
+      },
+      {
+        jobId: 'catalog-visits-refresh-recurring',
+        repeat: {
+          every: everyMs,
+        },
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+        removeOnComplete: true,
+        removeOnFail: false,
+      },
+    );
+  }
+
   async scanItemsPage(params: { limit?: number; scrollId?: string }) {
     const limit = params.limit ?? 50;
 
