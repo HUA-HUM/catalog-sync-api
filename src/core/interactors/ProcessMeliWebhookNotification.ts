@@ -9,6 +9,7 @@ import {
   CatalogBackfillJobs,
   CatalogBackfillQueue,
 } from 'src/app/drivers/repositories/processBull/catalogBackfill/CatalogBackfill.queue';
+import { MeliWebhookLogger } from 'src/app/drivers/repositories/processBull/webhooks/MeliWebhook.logger';
 
 @Injectable()
 export class ProcessMeliWebhookNotification {
@@ -54,6 +55,9 @@ export class ProcessMeliWebhookNotification {
     }
 
     await this.catalogRepository.upsertProducts(products);
+    MeliWebhookLogger.processing(
+      `synced item=${itemId} products=${products.length}`,
+    );
 
     for (const product of products) {
       if (Number(product.soldQuantity ?? 0) <= 0) continue;
@@ -80,6 +84,7 @@ export class ProcessMeliWebhookNotification {
           removeOnFail: false,
         },
       );
+      MeliWebhookLogger.processing(`queued orders item=${product.id}`);
     }
   }
 
