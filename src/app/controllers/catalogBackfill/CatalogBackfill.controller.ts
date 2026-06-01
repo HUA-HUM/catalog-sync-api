@@ -1,4 +1,4 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import { ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CatalogBackfillService } from 'src/app/services/catalogBackfill/CatalogBackfillService';
 
@@ -39,6 +39,12 @@ class ResumeVisitsDto {
 class RefreshVisitsDto {
   staleAfterDays?: number;
   limit?: number;
+}
+
+class SyncAuditQueryDto {
+  date?: string;
+  timezone?: string;
+  recentLimit?: string;
 }
 
 @ApiTags('Internal - Catalog Backfill')
@@ -136,6 +142,38 @@ export class CatalogBackfillController {
       staleAfterDays: body.staleAfterDays,
       limit: body.limit,
     });
+  }
+
+  @Get('audit/today')
+  @ApiOperation({
+    summary: 'Devuelve conteos de sincronizacion del dia para auditar webhooks',
+  })
+  syncAuditToday(@Query() query: SyncAuditQueryDto) {
+    return this.service.getTodaySyncAudit({
+      date: query.date,
+      timezone: query.timezone,
+      recentLimit: query.recentLimit ? Number(query.recentLimit) : undefined,
+    });
+  }
+
+  @Get('audit/updated-count')
+  @ApiOperation({
+    summary: 'Devuelve cuantos productos se sincronizaron en una fecha',
+  })
+  async updatedCount(@Query() query: SyncAuditQueryDto) {
+    const audit = await this.service.getTodaySyncAudit({
+      date: query.date,
+      timezone: query.timezone,
+      recentLimit: 1,
+    });
+
+    return {
+      date: audit.date,
+      timezone: audit.timezone,
+      updated_products: audit.counts.itemsSynced,
+      item_rows_updated: audit.counts.itemRowsUpdated,
+      details_synced: audit.counts.detailsSynced,
+    };
   }
 
   @Post('items/scan-page')

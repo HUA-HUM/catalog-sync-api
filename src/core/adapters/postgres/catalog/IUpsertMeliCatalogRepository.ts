@@ -80,6 +80,32 @@ export type MeliBulkProductVariation = {
   attribute_combinations?: unknown[] | null;
 };
 
+export type MeliCatalogSyncAudit = {
+  date: string;
+  timezone: string;
+  startAt: Date;
+  endAt: Date;
+  counts: {
+    itemsSynced: number;
+    itemRowsUpdated: number;
+    detailsSynced: number;
+    ordersUpdated: number;
+    visitsCaptured: number;
+    visitSnapshots: number;
+  };
+  recentItems: {
+    itemId: string;
+    title: string | null;
+    price: number | null;
+    stock: number | null;
+    soldQuantity: number | null;
+    status: string | null;
+    lastUpdated: Date | null;
+    lastSyncedAt: Date | null;
+    updatedAt: Date | null;
+  }[];
+};
+
 export interface IUpsertMeliCatalogRepository {
   upsertProducts(products: MeliBulkProduct[]): Promise<void>;
   upsertPendingItems(params: {
@@ -113,4 +139,9 @@ export interface IUpsertMeliCatalogRepository {
       itemId: string;
     }[]
   >;
+  getDailySyncAudit(params: {
+    date?: string;
+    timezone: string;
+    recentLimit: number;
+  }): Promise<MeliCatalogSyncAudit>;
 }
