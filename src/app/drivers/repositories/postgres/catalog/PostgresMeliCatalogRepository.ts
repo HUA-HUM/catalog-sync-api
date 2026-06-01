@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Pool, PoolClient } from 'pg';
 import {
   IUpsertMeliCatalogRepository,
+  MeliCatalogSyncAudit,
   MeliBulkProduct,
   MeliBulkProductAttribute,
   MeliBulkProductVariation,
@@ -161,6 +162,112 @@ export class PostgresMeliCatalogRepository
       sellerId: Number(row.seller_id),
       itemId: row.item_id,
     }));
+  }
+
+  async getDailySyncAudit(params: {
+    date?: string;
+    timezone: string;
+    recentLimit: number;
+  }): Promise<MeliCatalogSyncAudit> {
+    const bounds = await this.pool.query<{
+      audit_date: string;
+      start_at: Date;
+      end_at: Date;
+    }>(
+      `
+      WITH input AS (
+        SELECT
+          COALESCE($1::date, (now() AT TIME ZONE $2)::date) AS audit_date,
+          $2::text AS timezone
+      )
+      SELECT
+        audit_date::text,
+        audit_date::timestamp AT TIME ZONE timezone AS start_at,
+        (audit_date + 1)::timestamp AT TIME ZONE timezone AS end_at
+      FROM input
+      `,
+      [params.date ?? null, params.timezone],
+    );
+
+    const bound = bounds.rows[0];
+    const counts = await this.pool.query<{
+      items_synced: string;
+      item_rows_updated: string;
+      details_synced: string;
+      orders_updated: string;
+      visits_captured: string;
+      visit_snapshots: string;
+    }>(
+      `
+      SELECT
+        (SELECT COUNT(*) FROM meli_items WHERE last_synced_at >= $1 AND last_synced_at < $2) AS items_synced,
+        (SELECT COUNT(*) FROM meli_items WHERE updated_at >= $1 AND updated_at < $2) AS item_rows_updated,
+        (SELECT COUNT(*) FROM meli_item_details WHERE synced_at >= $1 AND synced_at < $2) AS details_synced,
+        (SELECT COUNT(*) FROM meli_orders WHERE updated_at >= $1 AND updated_at < $2) AS orders_updated,
+        (SELECT COUNT(*) FROM meli_item_visits_current WHERE captured_at >= $1 AND captured_at < $2) AS visits_captured,
+        (SELECT COUNT(*) FROM meli_item_visit_snapshots WHERE captured_at >= $1 AND captured_at < $2) AS visit_snapshots
+      `,
+      [bound.start_at, bound.end_at],
+    );
+
+    const recentItems = await this.pool.query<{
+      item_id: string;
+      title: string | null;
+      price: string | null;
+      stock: number | null;
+      sold_quantity: number | null;
+      status: string | null;
+      last_updated: Date | null;
+      last_synced_at: Date | null;
+      updated_at: Date | null;
+    }>(
+      `
+      SELECT
+        item_id,
+        title,
+        price,
+        stock,
+        sold_quantity,
+        status,
+        last_updated,
+        last_synced_at,
+        updated_at
+      FROM meli_items
+      WHERE last_synced_at >= $1
+        AND last_synced_at < $2
+      ORDER BY last_synced_at DESC
+      LIMIT $3
+      `,
+      [bound.start_at, bound.end_at, params.recentLimit],
+    );
+
+    const countRow = counts.rows[0];
+
+    return {
+      date: bound.audit_date,
+      timezone: params.timezone,
+      startAt: bound.start_at,
+      endAt: bound.end_at,
+      counts: {
+        itemsSynced: Number(countRow.items_synced),
+        itemRowsUpdated: Number(countRow.item_rows_updated),
+        detailsSynced: Number(countRow.details_synced),
+        ordersUpdated: Number(countRow.orders_updated),
+        visitsCaptured: Number(countRow.visits_captured),
+        visitSnapshots: Number(countRow.visit_snapshots),
+      },
+      recentItems: recentItems.rows.map((row) => ({
+        itemId: row.item_id,
+        title: row.title,
+        price: row.price === null ? null : Number(row.price),
+        stock: row.stock,
+        soldQuantity: row.sold_quantity,
+        status: row.status,
+        lastUpdated: row.last_updated,
+        lastSyncedAt: row.last_synced_at,
+        updatedAt: row.updated_at,
+      })),
+    };
   }
 
   async upsertProducts(products: MeliBulkProduct[]): Promise<void> {

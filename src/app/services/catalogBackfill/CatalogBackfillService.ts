@@ -286,6 +286,29 @@ export class CatalogBackfillService {
     );
   }
 
+  async getTodaySyncAudit(params: {
+    date?: string;
+    timezone?: string;
+    recentLimit?: number;
+  }) {
+    const timezone = params.timezone ?? 'America/Argentina/Buenos_Aires';
+    const recentLimit = params.recentLimit ?? 50;
+
+    if (params.date && !/^\d{4}-\d{2}-\d{2}$/.test(params.date)) {
+      throw new BadRequestException('date must use YYYY-MM-DD format');
+    }
+
+    if (recentLimit <= 0 || recentLimit > 500) {
+      throw new BadRequestException('recentLimit must be between 1 and 500');
+    }
+
+    return this.catalogRepository.getDailySyncAudit({
+      date: params.date,
+      timezone,
+      recentLimit,
+    });
+  }
+
   async scanItemsPage(params: { limit?: number; scrollId?: string }) {
     const limit = params.limit ?? 50;
 
