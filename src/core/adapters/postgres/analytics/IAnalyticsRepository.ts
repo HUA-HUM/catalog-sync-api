@@ -15,4 +15,10 @@ export interface IAnalyticsRepository {
   getConversionByCategory(params: AnalyticsDateRange): Promise<unknown>;
   getCatalogAge(): Promise<unknown>;
   getMissingData(): Promise<unknown>;
+  getProductPerformance(params: {
+    limit: number;
+    offset: number;
+    brand?: string;
+    categoryId?: string;
+  }): Promise<unknown>;
 }

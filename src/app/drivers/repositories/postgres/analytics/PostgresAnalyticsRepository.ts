@@ -377,6 +377,47 @@ export class PostgresAnalyticsRepository implements IAnalyticsRepository {
     return result.rows[0];
   }
 
+  async getProductPerformance(params: {
+    limit: number;
+    offset: number;
+    brand?: string;
+    categoryId?: string;
+  }): Promise<unknown> {
+    const filters: string[] = [];
+    const values: unknown[] = [];
+
+    if (params.brand) {
+      values.push(params.brand);
+      filters.push(`brand = $${values.length}`);
+    }
+
+    if (params.categoryId) {
+      values.push(params.categoryId);
+      filters.push(`category_id = $${values.length}`);
+    }
+
+    const whereSql = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+    values.push(params.limit, params.offset);
+
+    const result = await this.pool.query(
+      `
+      SELECT *
+      FROM analytics.product_performance
+      ${whereSql}
+      ORDER BY revenue DESC, total_visits DESC, item_id ASC
+      LIMIT $${values.length - 1}
+      OFFSET $${values.length}
+      `,
+      values,
+    );
+
+    return {
+      limit: params.limit,
+      offset: params.offset,
+      products: result.rows,
+    };
+  }
+
   private buildDateRange(params: AnalyticsDateRange): {
     from: Date;
     to: Date;
