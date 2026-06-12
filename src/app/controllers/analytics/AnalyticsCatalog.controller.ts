@@ -1,5 +1,5 @@
-import { Controller, Get } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Controller, Get, Query } from '@nestjs/common';
+import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { AnalyticsService } from 'src/app/services/analytics/AnalyticsService';
 
 @ApiTags('Analytics - Catalogo')
@@ -13,6 +13,22 @@ export class AnalyticsCatalogController {
   })
   summary() {
     return this.service.getCatalogSummary();
+  }
+
+  @Get('table-freshness')
+  @ApiOperation({
+    summary:
+      'Ultima actualizacion y estado de frescura de cada tabla de public y analytics',
+  })
+  @ApiQuery({
+    name: 'staleAfterHours',
+    required: false,
+    example: 24,
+    description:
+      'Una tabla queda stale cuando su ultima actualizacion supera estas horas',
+  })
+  tableFreshness(@Query('staleAfterHours') staleAfterHours?: string) {
+    return this.service.getTableFreshness(staleAfterHours);
   }
 
   @Get('age')

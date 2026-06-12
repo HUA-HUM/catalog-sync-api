@@ -4,6 +4,7 @@ import { POSTGRES_POOL } from 'src/app/modules/database/Database.module';
 import {
   AnalyticsDateRange,
   IAnalyticsRepository,
+  ProductPerformanceQuery,
 } from 'src/core/adapters/postgres/analytics/IAnalyticsRepository';
 
 @Injectable()
@@ -31,6 +32,158 @@ export class PostgresAnalyticsRepository implements IAnalyticsRepository {
     `);
 
     return result.rows[0];
+  }
+
+  async getTableFreshness(staleAfterHours: number): Promise<unknown> {
+    const metadata = await this.pool.query<{
+      schema_name: string;
+      table_name: string;
+      relation_type: 'table' | 'materialized_view';
+      estimated_rows: string;
+      timestamp_column: string | null;
+    }>(`
+      WITH relations AS (
+        SELECT
+          namespace.nspname AS schema_name,
+          relation.relname AS table_name,
+          CASE relation.relkind
+            WHEN 'm' THEN 'materialized_view'
+            ELSE 'table'
+          END AS relation_type,
+          GREATEST(relation.reltuples, 0)::bigint AS estimated_rows,
+          relation.oid AS relation_oid
+        FROM pg_class relation
+        JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
+        WHERE namespace.nspname IN ('public', 'analytics')
+          AND relation.relkind IN ('r', 'p', 'm')
+      ),
+      timestamp_columns AS (
+        SELECT
+          relations.relation_oid,
+          attribute.attname AS timestamp_column,
+          ROW_NUMBER() OVER (
+            PARTITION BY relations.relation_oid
+            ORDER BY CASE attribute.attname
+              WHEN 'last_synced_at' THEN 1
+              WHEN 'synced_at' THEN 2
+              WHEN 'captured_at' THEN 3
+              WHEN 'updated_at' THEN 4
+              WHEN 'last_updated' THEN 5
+              WHEN 'created_at' THEN 6
+              WHEN 'date_closed' THEN 7
+              WHEN 'date_created' THEN 8
+              ELSE 100
+            END
+          ) AS priority
+        FROM relations
+        JOIN pg_attribute attribute
+          ON attribute.attrelid = relations.relation_oid
+         AND attribute.attnum > 0
+         AND NOT attribute.attisdropped
+        JOIN pg_type column_type ON column_type.oid = attribute.atttypid
+        WHERE column_type.typname IN ('timestamp', 'timestamptz', 'date')
+          AND attribute.attname IN (
+            'last_synced_at',
+            'synced_at',
+            'captured_at',
+            'updated_at',
+            'last_updated',
+            'created_at',
+            'date_closed',
+            'date_created'
+          )
+      )
+      SELECT
+        relations.schema_name,
+        relations.table_name,
+        relations.relation_type,
+        relations.estimated_rows::text,
+        timestamp_columns.timestamp_column
+      FROM relations
+      LEFT JOIN timestamp_columns
+        ON timestamp_columns.relation_oid = relations.relation_oid
+       AND timestamp_columns.priority = 1
+      ORDER BY relations.schema_name, relations.table_name
+    `);
+
+    const generatedAt = new Date();
+    const staleBefore = new Date(
+      generatedAt.getTime() - staleAfterHours * 60 * 60 * 1000,
+    );
+
+    const tables = await Promise.all(
+      metadata.rows.map(async (relation) => {
+        const base = {
+          schema: relation.schema_name,
+          table: relation.table_name,
+          relation_type: relation.relation_type,
+          estimated_rows: Number(relation.estimated_rows),
+          timestamp_column: relation.timestamp_column,
+        };
+
+        if (!relation.timestamp_column) {
+          return {
+            ...base,
+            last_update: null,
+            age_hours: null,
+            status: Number(relation.estimated_rows) > 0 ? 'untracked' : 'empty',
+          };
+        }
+
+        try {
+          const schema = this.quoteIdentifier(relation.schema_name);
+          const table = this.quoteIdentifier(relation.table_name);
+          const timestampColumn = this.quoteIdentifier(
+            relation.timestamp_column,
+          );
+          const result = await this.pool.query<{ last_update: Date | null }>(
+            `SELECT MAX(${timestampColumn}) AS last_update FROM ${schema}.${table}`,
+          );
+          const lastUpdate = result.rows[0]?.last_update ?? null;
+          const ageHours = lastUpdate
+            ? (generatedAt.getTime() - new Date(lastUpdate).getTime()) / 3600000
+            : null;
+
+          return {
+            ...base,
+            last_update: lastUpdate,
+            age_hours:
+              ageHours === null
+                ? null
+                : Number(Math.max(ageHours, 0).toFixed(2)),
+            status:
+              lastUpdate === null
+                ? 'empty'
+                : new Date(lastUpdate) < staleBefore
+                  ? 'stale'
+                  : 'fresh',
+          };
+        } catch (error) {
+          return {
+            ...base,
+            last_update: null,
+            age_hours: null,
+            status: 'error',
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      }),
+    );
+
+    return {
+      generated_at: generatedAt,
+      stale_after_hours: staleAfterHours,
+      summary: {
+        total: tables.length,
+        fresh: tables.filter((table) => table.status === 'fresh').length,
+        stale: tables.filter((table) => table.status === 'stale').length,
+        empty: tables.filter((table) => table.status === 'empty').length,
+        untracked: tables.filter((table) => table.status === 'untracked')
+          .length,
+        errors: tables.filter((table) => table.status === 'error').length,
+      },
+      tables,
+    };
   }
 
   async getCategoryTree(): Promise<unknown> {
@@ -377,44 +530,225 @@ export class PostgresAnalyticsRepository implements IAnalyticsRepository {
     return result.rows[0];
   }
 
-  async getProductPerformance(params: {
-    limit: number;
-    offset: number;
-    brand?: string;
-    categoryId?: string;
-  }): Promise<unknown> {
+  async getProductPerformance(
+    params: ProductPerformanceQuery,
+  ): Promise<unknown> {
     const filters: string[] = [];
     const values: unknown[] = [];
 
-    if (params.brand) {
-      values.push(params.brand);
-      filters.push(`brand = $${values.length}`);
-    }
+    const addFilter = (
+      sql: (placeholder: string) => string,
+      value: unknown,
+    ) => {
+      values.push(value);
+      filters.push(sql(`$${values.length}`));
+    };
 
-    if (params.categoryId) {
-      values.push(params.categoryId);
-      filters.push(`category_id = $${values.length}`);
+    if (params.search) {
+      addFilter(
+        (p) =>
+          `POSITION(LOWER(${p}) IN LOWER(CONCAT_WS(' ', item_id, title, sku, brand, category_id, domain_id))) > 0`,
+        params.search,
+      );
+    }
+    if (params.sellerId !== undefined)
+      addFilter((p) => `seller_id = ${p}`, params.sellerId);
+    if (params.itemId) addFilter((p) => `item_id = ${p}`, params.itemId);
+    if (params.sku) addFilter((p) => `sku = ${p}`, params.sku);
+    if (params.skuPrefix)
+      addFilter((p) => `sku ILIKE ${p} || '%'`, params.skuPrefix);
+    if (params.brands)
+      addFilter((p) => `brand = ANY(${p}::text[])`, params.brands);
+    if (params.categoryIds)
+      addFilter((p) => `category_id = ANY(${p}::text[])`, params.categoryIds);
+    if (params.domainIds)
+      addFilter((p) => `domain_id = ANY(${p}::text[])`, params.domainIds);
+    if (params.statuses)
+      addFilter((p) => `status = ANY(${p}::text[])`, params.statuses);
+    if (params.conditions)
+      addFilter((p) => `condition = ANY(${p}::text[])`, params.conditions);
+    if (params.currencyId)
+      addFilter((p) => `currency_id = ${p}`, params.currencyId);
+    if (params.createdFrom)
+      addFilter((p) => `date_created >= ${p}::timestamptz`, params.createdFrom);
+    if (params.createdTo)
+      addFilter((p) => `date_created <= ${p}::timestamptz`, params.createdTo);
+    if (params.firstOrderFrom)
+      addFilter(
+        (p) => `first_order_date >= ${p}::timestamptz`,
+        params.firstOrderFrom,
+      );
+    if (params.firstOrderTo)
+      addFilter(
+        (p) => `first_order_date <= ${p}::timestamptz`,
+        params.firstOrderTo,
+      );
+    if (params.lastOrderFrom)
+      addFilter(
+        (p) => `last_order_date >= ${p}::timestamptz`,
+        params.lastOrderFrom,
+      );
+    if (params.lastOrderTo)
+      addFilter(
+        (p) => `last_order_date <= ${p}::timestamptz`,
+        params.lastOrderTo,
+      );
+    if (params.minPrice !== undefined)
+      addFilter((p) => `price >= ${p}`, params.minPrice);
+    if (params.maxPrice !== undefined)
+      addFilter((p) => `price <= ${p}`, params.maxPrice);
+    if (params.minStock !== undefined)
+      addFilter((p) => `stock >= ${p}`, params.minStock);
+    if (params.maxStock !== undefined)
+      addFilter((p) => `stock <= ${p}`, params.maxStock);
+    if (params.minAvailableQuantity !== undefined)
+      addFilter(
+        (p) => `available_quantity >= ${p}`,
+        params.minAvailableQuantity,
+      );
+    if (params.maxAvailableQuantity !== undefined)
+      addFilter(
+        (p) => `available_quantity <= ${p}`,
+        params.maxAvailableQuantity,
+      );
+    if (params.minCatalogSoldQuantity !== undefined)
+      addFilter(
+        (p) => `catalog_sold_quantity >= ${p}`,
+        params.minCatalogSoldQuantity,
+      );
+    if (params.maxCatalogSoldQuantity !== undefined)
+      addFilter(
+        (p) => `catalog_sold_quantity <= ${p}`,
+        params.maxCatalogSoldQuantity,
+      );
+    if (params.minVisits !== undefined)
+      addFilter((p) => `total_visits >= ${p}`, params.minVisits);
+    if (params.maxVisits !== undefined)
+      addFilter((p) => `total_visits <= ${p}`, params.maxVisits);
+    if (params.minOrders !== undefined)
+      addFilter((p) => `orders_count >= ${p}`, params.minOrders);
+    if (params.maxOrders !== undefined)
+      addFilter((p) => `orders_count <= ${p}`, params.maxOrders);
+    if (params.minUnitsSold !== undefined)
+      addFilter((p) => `units_sold >= ${p}`, params.minUnitsSold);
+    if (params.maxUnitsSold !== undefined)
+      addFilter((p) => `units_sold <= ${p}`, params.maxUnitsSold);
+    if (params.minRevenue !== undefined)
+      addFilter((p) => `revenue >= ${p}`, params.minRevenue);
+    if (params.maxRevenue !== undefined)
+      addFilter((p) => `revenue <= ${p}`, params.maxRevenue);
+    if (params.minAvgTicket !== undefined)
+      addFilter((p) => `avg_ticket >= ${p}`, params.minAvgTicket);
+    if (params.maxAvgTicket !== undefined)
+      addFilter((p) => `avg_ticket <= ${p}`, params.maxAvgTicket);
+    if (params.minDaysToFirstOrder !== undefined) {
+      addFilter(
+        (p) => `days_to_first_order >= ${p}`,
+        params.minDaysToFirstOrder,
+      );
+    }
+    if (params.maxDaysToFirstOrder !== undefined) {
+      addFilter(
+        (p) => `days_to_first_order <= ${p}`,
+        params.maxDaysToFirstOrder,
+      );
+    }
+    if (params.minOrderConversionRate !== undefined)
+      addFilter(
+        (p) => `order_conversion_rate >= ${p}`,
+        params.minOrderConversionRate,
+      );
+    if (params.maxOrderConversionRate !== undefined)
+      addFilter(
+        (p) => `order_conversion_rate <= ${p}`,
+        params.maxOrderConversionRate,
+      );
+    if (params.minUnitConversionRate !== undefined)
+      addFilter(
+        (p) => `unit_conversion_rate >= ${p}`,
+        params.minUnitConversionRate,
+      );
+    if (params.maxUnitConversionRate !== undefined)
+      addFilter(
+        (p) => `unit_conversion_rate <= ${p}`,
+        params.maxUnitConversionRate,
+      );
+    if (params.hasOrders !== undefined) {
+      filters.push(
+        params.hasOrders ? 'orders_count > 0' : 'COALESCE(orders_count, 0) = 0',
+      );
+    }
+    if (params.hasVisits !== undefined) {
+      filters.push(
+        params.hasVisits ? 'total_visits > 0' : 'COALESCE(total_visits, 0) = 0',
+      );
     }
 
     const whereSql = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
-    values.push(params.limit, params.offset);
+    const sortColumns: Record<ProductPerformanceQuery['sortBy'], string> = {
+      itemId: 'item_id',
+      title: 'title',
+      sku: 'sku',
+      brand: 'brand',
+      categoryId: 'category_id',
+      domainId: 'domain_id',
+      status: 'status',
+      price: 'price',
+      stock: 'stock',
+      availableQuantity: 'available_quantity',
+      catalogSoldQuantity: 'catalog_sold_quantity',
+      dateCreated: 'date_created',
+      lastUpdated: 'last_updated',
+      totalVisits: 'total_visits',
+      ordersCount: 'orders_count',
+      unitsSold: 'units_sold',
+      revenue: 'revenue',
+      avgTicket: 'avg_ticket',
+      firstOrderDate: 'first_order_date',
+      lastOrderDate: 'last_order_date',
+      daysToFirstOrder: 'days_to_first_order',
+      orderConversionRate: 'order_conversion_rate',
+      unitConversionRate: 'unit_conversion_rate',
+    };
+    const sortColumn = sortColumns[params.sortBy];
+    const sortOrder = params.sortOrder.toUpperCase();
+    const pageValues = [...values, params.limit, params.offset];
 
-    const result = await this.pool.query(
-      `
+    const [countResult, productsResult] = await Promise.all([
+      this.pool.query(
+        `SELECT COUNT(*)::int AS total FROM analytics.product_performance ${whereSql}`,
+        values,
+      ),
+      this.pool.query(
+        `
       SELECT *
       FROM analytics.product_performance
       ${whereSql}
-      ORDER BY revenue DESC, total_visits DESC, item_id ASC
-      LIMIT $${values.length - 1}
-      OFFSET $${values.length}
+      ORDER BY ${sortColumn} ${sortOrder} NULLS LAST, item_id ASC
+      LIMIT $${pageValues.length - 1}
+      OFFSET $${pageValues.length}
       `,
-      values,
-    );
+        pageValues,
+      ),
+    ]);
+
+    const total = countResult.rows[0].total as number;
 
     return {
-      limit: params.limit,
-      offset: params.offset,
-      products: result.rows,
+      pagination: {
+        total,
+        limit: params.limit,
+        offset: params.offset,
+        page: Math.floor(params.offset / params.limit) + 1,
+        total_pages: Math.ceil(total / params.limit),
+        has_next: params.offset + params.limit < total,
+        has_previous: params.offset > 0,
+      },
+      sort: {
+        by: params.sortBy,
+        order: params.sortOrder,
+      },
+      products: productsResult.rows,
     };
   }
 
@@ -428,5 +762,9 @@ export class PostgresAnalyticsRepository implements IAnalyticsRepository {
       : new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000);
 
     return { from, to };
+  }
+
+  private quoteIdentifier(identifier: string): string {
+    return `"${identifier.replace(/"/g, '""')}"`;
   }
 }
