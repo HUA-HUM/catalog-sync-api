@@ -42,6 +42,13 @@ export class AnalyticsProductsController {
     example: 'MLA-TELEVISIONS,MLA-AIR_FRYERS',
   })
   @ApiQuery({
+    name: 'listingTypeId',
+    required: false,
+    description:
+      'Uno o varios listing_type_id separados por coma. Ej: gold_special, gold_pro',
+    example: 'gold_special,gold_pro',
+  })
+  @ApiQuery({
     name: 'status',
     required: false,
     description: 'Estados separados por coma',
@@ -91,6 +98,7 @@ export class AnalyticsProductsController {
       'brand',
       'categoryId',
       'domainId',
+      'listingTypeId',
       'status',
       'price',
       'stock',
