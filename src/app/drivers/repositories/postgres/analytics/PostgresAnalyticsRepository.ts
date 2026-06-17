@@ -563,6 +563,11 @@ export class PostgresAnalyticsRepository implements IAnalyticsRepository {
       addFilter((p) => `category_id = ANY(${p}::text[])`, params.categoryIds);
     if (params.domainIds)
       addFilter((p) => `domain_id = ANY(${p}::text[])`, params.domainIds);
+    if (params.listingTypeIds)
+      addFilter(
+        (p) => `listing_type_id = ANY(${p}::text[])`,
+        params.listingTypeIds,
+      );
     if (params.statuses)
       addFilter((p) => `status = ANY(${p}::text[])`, params.statuses);
     if (params.conditions)
@@ -692,6 +697,7 @@ export class PostgresAnalyticsRepository implements IAnalyticsRepository {
       brand: 'brand',
       categoryId: 'category_id',
       domainId: 'domain_id',
+      listingTypeId: 'listing_type_id',
       status: 'status',
       price: 'price',
       stock: 'stock',
@@ -713,16 +719,27 @@ export class PostgresAnalyticsRepository implements IAnalyticsRepository {
     const sortColumn = sortColumns[params.sortBy];
     const sortOrder = params.sortOrder.toUpperCase();
     const pageValues = [...values, params.limit, params.offset];
+    const productPerformanceSource = `
+      (
+        SELECT
+          pp.*,
+          i.listing_type_id
+        FROM analytics.product_performance pp
+        LEFT JOIN public.meli_items i
+          ON i.seller_id = pp.seller_id
+         AND i.item_id = pp.item_id
+      ) product_performance
+    `;
 
     const [countResult, productsResult] = await Promise.all([
       this.pool.query(
-        `SELECT COUNT(*)::int AS total FROM analytics.product_performance ${whereSql}`,
+        `SELECT COUNT(*)::int AS total FROM ${productPerformanceSource} ${whereSql}`,
         values,
       ),
       this.pool.query(
         `
       SELECT *
-      FROM analytics.product_performance
+      FROM ${productPerformanceSource}
       ${whereSql}
       ORDER BY ${sortColumn} ${sortOrder} NULLS LAST, item_id ASC
       LIMIT $${pageValues.length - 1}

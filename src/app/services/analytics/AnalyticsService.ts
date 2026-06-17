@@ -107,6 +107,7 @@ export class AnalyticsService {
       brands: this.parseList(params.brand),
       categoryIds: this.parseList(params.categoryId),
       domainIds: this.parseList(params.domainId),
+      listingTypeIds: this.parseList(params.listingTypeId),
       statuses: this.parseList(params.status),
       conditions: this.parseList(params.condition),
       currencyId: this.parseText(params.currencyId),

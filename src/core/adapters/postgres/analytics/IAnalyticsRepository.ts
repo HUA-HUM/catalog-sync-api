@@ -10,6 +10,7 @@ export const PRODUCT_PERFORMANCE_SORT_FIELDS = [
   'brand',
   'categoryId',
   'domainId',
+  'listingTypeId',
   'status',
   'price',
   'stock',
@@ -43,6 +44,7 @@ export type ProductPerformanceQuery = {
   brands?: string[];
   categoryIds?: string[];
   domainIds?: string[];
+  listingTypeIds?: string[];
   statuses?: string[];
   conditions?: string[];
   currencyId?: string;
