@@ -3,6 +3,35 @@ export type AnalyticsDateRange = {
   to?: string;
 };
 
+export type CategoryPerformanceQuery = AnalyticsDateRange & {
+  limit: number;
+  offset: number;
+};
+
+export type CategoryListQuery = {
+  limit: number;
+  offset: number;
+  search?: string;
+};
+
+export type CategoryPublicationsQuery = {
+  categoryId: string;
+  domainId?: string;
+};
+
+export type CategoryVisitsQuery = {
+  categoryId: string;
+  domainId?: string;
+};
+
+export type CategoryHistoryGranularity = 'day' | 'week' | 'month';
+
+export type CategoryHistoryQuery = AnalyticsDateRange & {
+  granularity: CategoryHistoryGranularity;
+  limit: number;
+  offset: number;
+};
+
 export const PRODUCT_PERFORMANCE_SORT_FIELDS = [
   'itemId',
   'title',
@@ -87,8 +116,12 @@ export type ProductPerformanceQuery = {
 export interface IAnalyticsRepository {
   getCatalogSummary(): Promise<unknown>;
   getTableFreshness(staleAfterHours: number): Promise<unknown>;
+  getCategories(params: CategoryListQuery): Promise<unknown>;
+  getCategoryPublications(params: CategoryPublicationsQuery): Promise<unknown>;
+  getCategoryVisits(params: CategoryVisitsQuery): Promise<unknown>;
   getCategoryTree(): Promise<unknown>;
-  getCategoryPerformance(params: AnalyticsDateRange): Promise<unknown>;
+  getCategoryPerformance(params: CategoryPerformanceQuery): Promise<unknown>;
+  getCategoryHistory(params: CategoryHistoryQuery): Promise<unknown>;
   getBrandSummary(params: AnalyticsDateRange): Promise<unknown>;
   getBrandOrders(params: AnalyticsDateRange): Promise<unknown>;
   getOrdersSummary(params: AnalyticsDateRange): Promise<unknown>;

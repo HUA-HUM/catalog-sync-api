@@ -1,6 +1,12 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import type {
   AnalyticsDateRange,
+  CategoryHistoryGranularity,
+  CategoryHistoryQuery,
+  CategoryListQuery,
+  CategoryPerformanceQuery,
+  CategoryPublicationsQuery,
+  CategoryVisitsQuery,
   IAnalyticsRepository,
   ProductPerformanceQuery,
   ProductPerformanceSortField,
@@ -41,12 +47,117 @@ export class AnalyticsService {
     return this.analyticsRepository.getMissingData();
   }
 
+  getCategories(params: { limit?: string; offset?: string; search?: string }) {
+    const query: CategoryListQuery = {
+      limit: this.parseNumber(params.limit, 'limit', {
+        defaultValue: 1000,
+        min: 1,
+        max: 10000,
+        integer: true,
+      }),
+      offset: this.parseNumber(params.offset, 'offset', {
+        defaultValue: 0,
+        min: 0,
+        integer: true,
+      }),
+      search: this.parseText(params.search),
+    };
+
+    return this.analyticsRepository.getCategories(query);
+  }
+
+  getCategoryPublications(
+    categoryId: string | undefined,
+    params: {
+      domainId?: string;
+    },
+  ) {
+    const parsedCategoryId = this.parseText(categoryId);
+    if (!parsedCategoryId) {
+      throw new BadRequestException('categoryId is required');
+    }
+
+    const query: CategoryPublicationsQuery = {
+      categoryId: parsedCategoryId,
+      domainId: this.parseText(params.domainId),
+    };
+
+    return this.analyticsRepository.getCategoryPublications(query);
+  }
+
+  getCategoryVisits(
+    categoryId: string | undefined,
+    params: {
+      domainId?: string;
+    },
+  ) {
+    const parsedCategoryId = this.parseText(categoryId);
+    if (!parsedCategoryId) {
+      throw new BadRequestException('categoryId is required');
+    }
+
+    const query: CategoryVisitsQuery = {
+      categoryId: parsedCategoryId,
+      domainId: this.parseText(params.domainId),
+    };
+
+    return this.analyticsRepository.getCategoryVisits(query);
+  }
+
   getCategoryTree() {
     return this.analyticsRepository.getCategoryTree();
   }
 
-  getCategoryPerformance(range: AnalyticsDateRange) {
-    return this.analyticsRepository.getCategoryPerformance(range);
+  getCategoryPerformance(params: {
+    from?: string;
+    to?: string;
+    limit?: string;
+    offset?: string;
+  }) {
+    const query: CategoryPerformanceQuery = {
+      from: this.parseDate(params.from, 'from'),
+      to: this.parseDate(params.to, 'to'),
+      limit: this.parseNumber(params.limit, 'limit', {
+        defaultValue: 100,
+        min: 1,
+        max: 1000,
+        integer: true,
+      }),
+      offset: this.parseNumber(params.offset, 'offset', {
+        defaultValue: 0,
+        min: 0,
+        integer: true,
+      }),
+    };
+
+    return this.analyticsRepository.getCategoryPerformance(query);
+  }
+
+  getCategoryHistory(params: {
+    from?: string;
+    to?: string;
+    granularity?: string;
+    limit?: string;
+    offset?: string;
+  }) {
+    const query: CategoryHistoryQuery = {
+      from: this.parseDate(params.from, 'from'),
+      to: this.parseDate(params.to, 'to'),
+      granularity: this.parseCategoryHistoryGranularity(params.granularity),
+      limit: this.parseNumber(params.limit, 'limit', {
+        defaultValue: 25,
+        min: 1,
+        max: 250,
+        integer: true,
+      }),
+      offset: this.parseNumber(params.offset, 'offset', {
+        defaultValue: 0,
+        min: 0,
+        integer: true,
+      }),
+    };
+
+    return this.analyticsRepository.getCategoryHistory(query);
   }
 
   getBrandSummary(range: AnalyticsDateRange) {
@@ -309,6 +420,21 @@ export class AnalyticsService {
       throw new BadRequestException('sortOrder must be asc or desc');
     }
     return sortOrder;
+  }
+
+  private parseCategoryHistoryGranularity(
+    value?: string,
+  ): CategoryHistoryGranularity {
+    const granularity = (value || 'month').toLowerCase();
+    if (
+      granularity !== 'day' &&
+      granularity !== 'week' &&
+      granularity !== 'month'
+    ) {
+      throw new BadRequestException('granularity must be day, week or month');
+    }
+
+    return granularity;
   }
 
   private validateRange(
