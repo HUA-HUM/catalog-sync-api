@@ -113,4 +113,22 @@ export class AnalyticsCategoriesController {
   ) {
     return this.service.getCategoryVisits(categoryId, { domainId });
   }
+
+  @Get(':categoryId/revenue')
+  @ApiOperation({
+    summary: 'Facturacion para una categoria',
+  })
+  @ApiParam({ name: 'categoryId', example: 'MLA1055' })
+  @ApiQuery({
+    name: 'domainId',
+    required: false,
+    description:
+      'Filtra por domain_id cuando una categoria aparece en mas de un dominio',
+  })
+  revenue(
+    @Param('categoryId') categoryId: string,
+    @Query('domainId') domainId?: string,
+  ) {
+    return this.service.getCategoryRevenue(categoryId, { domainId });
+  }
 }

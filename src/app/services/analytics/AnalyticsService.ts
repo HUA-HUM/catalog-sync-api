@@ -6,6 +6,7 @@ import type {
   CategoryListQuery,
   CategoryPerformanceQuery,
   CategoryPublicationsQuery,
+  CategoryRevenueQuery,
   CategoryVisitsQuery,
   IAnalyticsRepository,
   ProductPerformanceQuery,
@@ -102,6 +103,25 @@ export class AnalyticsService {
     };
 
     return this.analyticsRepository.getCategoryVisits(query);
+  }
+
+  getCategoryRevenue(
+    categoryId: string | undefined,
+    params: {
+      domainId?: string;
+    },
+  ) {
+    const parsedCategoryId = this.parseText(categoryId);
+    if (!parsedCategoryId) {
+      throw new BadRequestException('categoryId is required');
+    }
+
+    const query: CategoryRevenueQuery = {
+      categoryId: parsedCategoryId,
+      domainId: this.parseText(params.domainId),
+    };
+
+    return this.analyticsRepository.getCategoryRevenue(query);
   }
 
   getCategoryTree() {
