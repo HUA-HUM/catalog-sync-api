@@ -24,6 +24,11 @@ export type CategoryVisitsQuery = {
   domainId?: string;
 };
 
+export type CategoryRevenueQuery = {
+  categoryId: string;
+  domainId?: string;
+};
+
 export type CategoryHistoryGranularity = 'day' | 'week' | 'month';
 
 export type CategoryHistoryQuery = AnalyticsDateRange & {
@@ -119,6 +124,7 @@ export interface IAnalyticsRepository {
   getCategories(params: CategoryListQuery): Promise<unknown>;
   getCategoryPublications(params: CategoryPublicationsQuery): Promise<unknown>;
   getCategoryVisits(params: CategoryVisitsQuery): Promise<unknown>;
+  getCategoryRevenue(params: CategoryRevenueQuery): Promise<unknown>;
   getCategoryTree(): Promise<unknown>;
   getCategoryPerformance(params: CategoryPerformanceQuery): Promise<unknown>;
   getCategoryHistory(params: CategoryHistoryQuery): Promise<unknown>;

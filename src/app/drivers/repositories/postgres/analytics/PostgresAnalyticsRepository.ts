@@ -7,6 +7,7 @@ import {
   CategoryListQuery,
   CategoryPerformanceQuery,
   CategoryPublicationsQuery,
+  CategoryRevenueQuery,
   CategoryVisitsQuery,
   IAnalyticsRepository,
   ProductPerformanceQuery,
@@ -395,6 +396,102 @@ export class PostgresAnalyticsRepository implements IAnalyticsRepository {
       domain_id: params.domainId ?? null,
       source: 'analytics.product_performance',
       visits: summaryResult.rows[0],
+      by_domain: byDomainResult.rows,
+      top_products: topProductsResult.rows,
+    };
+  }
+
+  async getCategoryRevenue(params: CategoryRevenueQuery): Promise<unknown> {
+    const values: unknown[] = [params.categoryId];
+    const filters = ['category_id = $1'];
+
+    if (params.domainId) {
+      values.push(params.domainId);
+      filters.push(`domain_id = $${values.length}`);
+    }
+
+    const whereSql = `WHERE ${filters.join(' AND ')}`;
+
+    const [summaryResult, byDomainResult, topProductsResult] =
+      await Promise.all([
+        this.pool.query(
+          `
+          SELECT
+            COALESCE(SUM(revenue), 0)::numeric AS total_revenue,
+            COALESCE(SUM(units_sold), 0)::int AS units_sold,
+            COALESCE(SUM(orders_count), 0)::int AS orders_count,
+            COUNT(*)::int AS total_publications,
+            COUNT(*) FILTER (
+              WHERE COALESCE(revenue, 0) > 0
+            )::int AS publications_with_revenue,
+            COUNT(*) FILTER (
+              WHERE COALESCE(revenue, 0) = 0
+            )::int AS publications_without_revenue,
+            ROUND(
+              CASE
+                WHEN COALESCE(SUM(orders_count), 0) = 0 THEN 0
+                ELSE COALESCE(SUM(revenue), 0)::numeric / SUM(orders_count)
+              END,
+              2
+            )::numeric AS avg_revenue_per_order,
+            ROUND(
+              CASE
+                WHEN COALESCE(SUM(units_sold), 0) = 0 THEN 0
+                ELSE COALESCE(SUM(revenue), 0)::numeric / SUM(units_sold)
+              END,
+              2
+            )::numeric AS avg_revenue_per_unit,
+            COALESCE(MAX(revenue), 0)::numeric AS max_product_revenue,
+            MIN(first_order_date) AS first_order_date,
+            MAX(last_order_date) AS last_order_date
+          FROM analytics.product_performance
+          ${whereSql}
+          `,
+          values,
+        ),
+        this.pool.query(
+          `
+          SELECT
+            domain_id,
+            COALESCE(SUM(revenue), 0)::numeric AS total_revenue,
+            COALESCE(SUM(units_sold), 0)::int AS units_sold,
+            COALESCE(SUM(orders_count), 0)::int AS orders_count,
+            COUNT(*)::int AS total_publications,
+            COUNT(*) FILTER (
+              WHERE COALESCE(revenue, 0) > 0
+            )::int AS publications_with_revenue
+          FROM analytics.product_performance
+          ${whereSql}
+          GROUP BY domain_id
+          ORDER BY total_revenue DESC, domain_id ASC
+          `,
+          values,
+        ),
+        this.pool.query(
+          `
+          SELECT
+            item_id,
+            title,
+            sku,
+            brand,
+            revenue,
+            orders_count,
+            units_sold,
+            status
+          FROM analytics.product_performance
+          ${whereSql}
+          ORDER BY revenue DESC NULLS LAST, item_id ASC
+          LIMIT 10
+          `,
+          values,
+        ),
+      ]);
+
+    return {
+      category_id: params.categoryId,
+      domain_id: params.domainId ?? null,
+      source: 'analytics.product_performance',
+      revenue: summaryResult.rows[0],
       by_domain: byDomainResult.rows,
       top_products: topProductsResult.rows,
     };
