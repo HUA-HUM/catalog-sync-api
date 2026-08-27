@@ -10,6 +10,7 @@ import {
   CategoryRevenueQuery,
   CategoryVisitsQuery,
   IAnalyticsRepository,
+  ProductLookupQuery,
   ProductPerformanceQuery,
 } from 'src/core/adapters/postgres/analytics/IAnalyticsRepository';
 
@@ -1765,6 +1766,52 @@ export class PostgresAnalyticsRepository implements IAnalyticsRepository {
         has_previous: params.params.offset > 0,
       },
       categories,
+    };
+  }
+
+  async getProductsLookup(params: ProductLookupQuery): Promise<unknown> {
+    const result = await this.pool.query<{
+      item_id: string;
+      sku: string | null;
+      category_id: string | null;
+      listing_type_id: string | null;
+      price: string | null;
+      last_updated: Date | null;
+      status: string | null;
+    }>(
+      `
+      SELECT
+        i.item_id,
+        COALESCE(i.seller_sku, i.seller_custom_field) AS sku,
+        i.category_id,
+        i.listing_type_id,
+        i.price,
+        i.last_updated,
+        i.status
+      FROM meli_items i
+      WHERE i.item_id = ANY($1::text[])
+      ORDER BY array_position($1::text[], i.item_id)
+      `,
+      [params.itemIds],
+    );
+
+    const products = result.rows.map((row) => ({
+      itemId: row.item_id,
+      sku: row.sku,
+      categoryId: row.category_id,
+      listingTypeId: row.listing_type_id,
+      price: row.price === null ? null : Number(row.price),
+      last_updated: row.last_updated,
+      status: row.status,
+    }));
+
+    const found = new Set(products.map((product) => product.itemId));
+
+    return {
+      requested: params.itemIds.length,
+      found: products.length,
+      not_found: params.itemIds.filter((itemId) => !found.has(itemId)),
+      products,
     };
   }
 

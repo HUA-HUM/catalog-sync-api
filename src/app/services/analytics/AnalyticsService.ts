@@ -9,6 +9,7 @@ import type {
   CategoryRevenueQuery,
   CategoryVisitsQuery,
   IAnalyticsRepository,
+  ProductLookupQuery,
   ProductPerformanceQuery,
   ProductPerformanceSortField,
 } from 'src/core/adapters/postgres/analytics/IAnalyticsRepository';
@@ -212,6 +213,18 @@ export class AnalyticsService {
 
   getConversionByCategory(range: AnalyticsDateRange) {
     return this.analyticsRepository.getConversionByCategory(range);
+  }
+
+  getProductsLookup(ids?: string) {
+    const itemIds = this.parseList(ids);
+
+    if (!itemIds) {
+      throw new BadRequestException('ids is required');
+    }
+
+    const query: ProductLookupQuery = { itemIds };
+
+    return this.analyticsRepository.getProductsLookup(query);
   }
 
   getProductPerformance(params: { [key: string]: string | undefined }) {
