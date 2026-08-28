@@ -7,6 +7,23 @@ import { AnalyticsService } from 'src/app/services/analytics/AnalyticsService';
 export class AnalyticsProductsController {
   constructor(private readonly service: AnalyticsService) {}
 
+  @Get('lookup')
+  @ApiOperation({
+    summary:
+      'Datos vivos de uno o varios MLAs (precio, estado, SKU) desde meli_items',
+    description:
+      'Lee meli_items directamente, no la vista materializada, asi devuelve precio y estado actualizados. Acepta un MLA o varios separados por coma.',
+  })
+  @ApiQuery({
+    name: 'ids',
+    required: true,
+    description: 'Uno o varios MLA separados por coma (maximo 100)',
+    example: 'MLA3770706662,MLA1757293798',
+  })
+  lookup(@Query('ids') ids?: string) {
+    return this.service.getProductsLookup(ids);
+  }
+
   @Get('performance')
   @ApiOperation({
     summary:

@@ -118,6 +118,10 @@ export type ProductPerformanceQuery = {
   sortOrder: 'asc' | 'desc';
 };
 
+export type ProductLookupQuery = {
+  itemIds: string[];
+};
+
 export interface IAnalyticsRepository {
   getCatalogSummary(): Promise<unknown>;
   getTableFreshness(staleAfterHours: number): Promise<unknown>;
@@ -137,4 +141,5 @@ export interface IAnalyticsRepository {
   getCatalogAge(): Promise<unknown>;
   getMissingData(): Promise<unknown>;
   getProductPerformance(params: ProductPerformanceQuery): Promise<unknown>;
+  getProductsLookup(params: ProductLookupQuery): Promise<unknown>;
 }
