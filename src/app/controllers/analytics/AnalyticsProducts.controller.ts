@@ -1,5 +1,6 @@
-import { Controller, Get, Query } from '@nestjs/common';
-import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { ApiOperation, ApiQuery, ApiSecurity, ApiTags } from '@nestjs/swagger';
+import { InternalApiKeyGuard } from 'src/app/guards/InternalApiKey.guard';
 import { AnalyticsService } from 'src/app/services/analytics/AnalyticsService';
 
 @ApiTags('Analytics - Productos')
@@ -8,11 +9,13 @@ export class AnalyticsProductsController {
   constructor(private readonly service: AnalyticsService) {}
 
   @Get('lookup')
+  @UseGuards(InternalApiKeyGuard)
+  @ApiSecurity('internal-api-key')
   @ApiOperation({
     summary:
       'Datos vivos de uno o varios MLAs (precio, estado, SKU) desde meli_items',
     description:
-      'Lee meli_items directamente, no la vista materializada, asi devuelve precio y estado actualizados. Acepta un MLA o varios separados por coma.',
+      'Lee meli_items directamente, no la vista materializada, asi devuelve precio y estado actualizados. Acepta un MLA o varios separados por coma. Requiere el header x-internal-api-key.',
   })
   @ApiQuery({
     name: 'ids',
