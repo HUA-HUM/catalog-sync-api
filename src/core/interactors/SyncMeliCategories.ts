@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { IGetCategoriesRepository } from '../adapters/mercadolibre-api/categories/IGetCategoriesRepository';
 import type { ISaveMeliCategoriesRepository } from '../adapters/madre-api/categories/ISaveMeliCategoriesRepository';
+import type { IUpsertMeliCategoriesRepository } from '../adapters/postgres/categories/IUpsertMeliCategoriesRepository';
 import { FlatCategory } from '../entitis/madre-api/categories/FlatCategory';
 
 @Injectable()
@@ -13,6 +14,9 @@ export class SyncMeliCategories {
 
     @Inject('ISaveMeliCategoriesRepository')
     private readonly saveRepo: ISaveMeliCategoriesRepository,
+
+    @Inject('IUpsertMeliCategoriesRepository')
+    private readonly postgresRepo: IUpsertMeliCategoriesRepository,
   ) {}
 
   async execute(): Promise<void> {
@@ -82,7 +86,13 @@ export class SyncMeliCategories {
     for (let i = 0; i < categories.length; i += this.CHUNK_SIZE) {
       const chunk = categories.slice(i, i + this.CHUNK_SIZE);
 
+      // Dos destinos: madre-api (MySQL, uso de negocio) y la base del catálogo
+      // (Postgres), donde la web necesita el árbol al lado de `meli_items` para
+      // poder resolver los descendientes de una categoría por JOIN.
+      // Ambos son upserts idempotentes, así que si falla uno el reintento del
+      // job rehace los dos sin duplicar nada.
       await this.saveRepo.save(chunk);
+      await this.postgresRepo.upsertMany(chunk);
 
       console.log(`💾 Saved chunk ${i} - ${i + chunk.length}`);
     }
