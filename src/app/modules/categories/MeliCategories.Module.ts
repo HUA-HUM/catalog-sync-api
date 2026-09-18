@@ -8,6 +8,7 @@ import { SyncStatesRepository } from 'src/core/drivers/madre-api/syncStates/Sync
 import { MeliHttpClient } from 'src/core/drivers/mercadolibre-api/http/MeliHttpClient';
 import { MadreHttpClient } from 'src/core/drivers/madre-api/http/MadreHttpClient';
 import { startMeliCategoriesSyncWorker } from 'src/app/drivers/repositories/processBull/categories/MeliCategoriesSync.worker';
+import { PostgresMeliCategoriesRepository } from 'src/app/drivers/repositories/postgres/categories/PostgresMeliCategoriesRepository';
 
 @Module({
   controllers: [SyncMeliCategoriesController],
@@ -22,6 +23,10 @@ import { startMeliCategoriesSyncWorker } from 'src/app/drivers/repositories/proc
     {
       provide: 'ISaveMeliCategoriesRepository',
       useClass: SaveMeliCategoriesRepository,
+    },
+    {
+      provide: 'IUpsertMeliCategoriesRepository',
+      useClass: PostgresMeliCategoriesRepository,
     },
     {
       provide: 'ISyncStatesRepository',
