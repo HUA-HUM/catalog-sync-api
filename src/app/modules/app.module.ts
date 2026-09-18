@@ -6,6 +6,7 @@ import { CatalogPersistenceModule } from './catalogPersistence/CatalogPersistenc
 import { MeliWebhookModule } from './webhooks/MeliWebhook.module';
 import { CatalogBackfillModule } from './catalogBackfill/CatalogBackfill.module';
 import { AnalyticsModule } from './analytics/Analytics.module';
+import { MeliCategoriesModule } from './categories/MeliCategories.Module';
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -17,6 +18,7 @@ import { AnalyticsModule } from './analytics/Analytics.module';
     MeliWebhookModule,
     CatalogBackfillModule,
     AnalyticsModule,
+    MeliCategoriesModule,
   ],
 })
 export class AppModule {}
