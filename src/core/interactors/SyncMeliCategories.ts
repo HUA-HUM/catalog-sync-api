@@ -86,13 +86,23 @@ export class SyncMeliCategories {
     for (let i = 0; i < categories.length; i += this.CHUNK_SIZE) {
       const chunk = categories.slice(i, i + this.CHUNK_SIZE);
 
-      // Dos destinos: madre-api (MySQL, uso de negocio) y la base del catálogo
-      // (Postgres), donde la web necesita el árbol al lado de `meli_items` para
-      // poder resolver los descendientes de una categoría por JOIN.
-      // Ambos son upserts idempotentes, así que si falla uno el reintento del
-      // job rehace los dos sin duplicar nada.
-      await this.saveRepo.save(chunk);
+      // Dos destinos. Postgres primero porque es del que depende la web: ahí
+      // vive el árbol al lado de `meli_items` y sin él no se pueden resolver
+      // los descendientes de una categoría.
       await this.postgresRepo.upsertMany(chunk);
+
+      // madre-api es best-effort: si su endpoint no está disponible, no tiene
+      // sentido tirar abajo un job que ya recorrió 11k categorías y que ya
+      // dejó el dato donde hace falta. Queda el warning para no perderlo de
+      // vista. Ambos son upserts idempotentes, así que un reintento del job
+      // rehace los dos sin duplicar nada.
+      try {
+        await this.saveRepo.save(chunk);
+      } catch (error: any) {
+        console.warn(
+          `⚠️ No se pudo guardar el chunk en madre-api: ${error?.message ?? error}`,
+        );
+      }
 
       console.log(`💾 Saved chunk ${i} - ${i + chunk.length}`);
     }
