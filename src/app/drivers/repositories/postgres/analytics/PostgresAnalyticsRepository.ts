@@ -12,6 +12,8 @@ import {
   IAnalyticsRepository,
   ProductLookupQuery,
   ProductPerformanceQuery,
+  ProductVisitsBulkQuery,
+  ProductVisitsPageQuery,
 } from 'src/core/adapters/postgres/analytics/IAnalyticsRepository';
 
 @Injectable()
@@ -1812,6 +1814,74 @@ export class PostgresAnalyticsRepository implements IAnalyticsRepository {
       found: products.length,
       not_found: params.itemIds.filter((itemId) => !found.has(itemId)),
       products,
+    };
+  }
+
+  async getProductsVisitsBulk(
+    params: ProductVisitsBulkQuery,
+  ): Promise<unknown> {
+    const result = await this.pool.query<{
+      item_id: string;
+      total_visits: number;
+      captured_at: Date;
+    }>(
+      `
+      SELECT v.item_id, v.total_visits, v.captured_at
+      FROM meli_item_visits_current v
+      WHERE v.item_id = ANY($1::text[])
+      `,
+      [params.itemIds],
+    );
+
+    const visits = result.rows.map((row) => ({
+      itemId: row.item_id,
+      visits: Number(row.total_visits),
+      capturedAt: row.captured_at,
+    }));
+
+    const found = new Set(visits.map((visit) => visit.itemId));
+
+    return {
+      requested: params.itemIds.length,
+      found: visits.length,
+      not_found: params.itemIds.filter((itemId) => !found.has(itemId)),
+      visits,
+    };
+  }
+
+  async getProductsVisitsPage(
+    params: ProductVisitsPageQuery,
+  ): Promise<unknown> {
+    const result = await this.pool.query<{
+      item_id: string;
+      total_visits: number;
+      captured_at: Date;
+    }>(
+      `
+      SELECT v.item_id, v.total_visits, v.captured_at
+      FROM meli_item_visits_current v
+      WHERE ($1::text IS NULL OR v.item_id > $1)
+      ORDER BY v.item_id
+      LIMIT $2
+      `,
+      [params.afterItemId ?? null, params.limit],
+    );
+
+    const visits = result.rows.map((row) => ({
+      itemId: row.item_id,
+      visits: Number(row.total_visits),
+      capturedAt: row.captured_at,
+    }));
+
+    const hasNext = visits.length === params.limit;
+
+    return {
+      count: visits.length,
+      limit: params.limit,
+      after_item_id: params.afterItemId ?? null,
+      has_next: hasNext,
+      next_cursor: hasNext ? visits[visits.length - 1].itemId : null,
+      visits,
     };
   }
 
