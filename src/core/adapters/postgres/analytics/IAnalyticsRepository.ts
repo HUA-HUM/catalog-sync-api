@@ -122,6 +122,15 @@ export type ProductLookupQuery = {
   itemIds: string[];
 };
 
+export type ProductVisitsBulkQuery = {
+  itemIds: string[];
+};
+
+export type ProductVisitsPageQuery = {
+  limit: number;
+  afterItemId?: string;
+};
+
 export interface IAnalyticsRepository {
   getCatalogSummary(): Promise<unknown>;
   getTableFreshness(staleAfterHours: number): Promise<unknown>;
@@ -142,4 +151,6 @@ export interface IAnalyticsRepository {
   getMissingData(): Promise<unknown>;
   getProductPerformance(params: ProductPerformanceQuery): Promise<unknown>;
   getProductsLookup(params: ProductLookupQuery): Promise<unknown>;
+  getProductsVisitsBulk(params: ProductVisitsBulkQuery): Promise<unknown>;
+  getProductsVisitsPage(params: ProductVisitsPageQuery): Promise<unknown>;
 }

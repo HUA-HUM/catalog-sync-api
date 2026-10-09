@@ -12,6 +12,8 @@ import type {
   ProductLookupQuery,
   ProductPerformanceQuery,
   ProductPerformanceSortField,
+  ProductVisitsBulkQuery,
+  ProductVisitsPageQuery,
 } from 'src/core/adapters/postgres/analytics/IAnalyticsRepository';
 import { PRODUCT_PERFORMANCE_SORT_FIELDS } from 'src/core/adapters/postgres/analytics/IAnalyticsRepository';
 
@@ -225,6 +227,65 @@ export class AnalyticsService {
     const query: ProductLookupQuery = { itemIds };
 
     return this.analyticsRepository.getProductsLookup(query);
+  }
+
+  getProductsVisitsBulk(ids?: unknown) {
+    const itemIds = this.parseItemIdList(ids, 10000);
+
+    const query: ProductVisitsBulkQuery = { itemIds };
+
+    return this.analyticsRepository.getProductsVisitsBulk(query);
+  }
+
+  getProductsVisitsPage(params: { limit?: string; afterItemId?: string }) {
+    const query: ProductVisitsPageQuery = {
+      limit: this.parseNumber(params.limit, 'limit', {
+        defaultValue: 1000,
+        min: 1,
+        max: 10000,
+        integer: true,
+      }),
+      afterItemId: this.parseText(params.afterItemId),
+    };
+
+    return this.analyticsRepository.getProductsVisitsPage(query);
+  }
+
+  /**
+   * Normaliza una lista de MLAs que puede venir como array (body JSON) o
+   * como string separado por comas (query string). parseList no sirve acá
+   * porque corta en 100 y estos endpoints son bulk.
+   */
+  private parseItemIdList(value: unknown, max: number): string[] {
+    const raw = Array.isArray(value)
+      ? value
+      : typeof value === 'string'
+        ? value.split(',')
+        : null;
+
+    if (!raw) {
+      throw new BadRequestException(
+        'ids must be an array or a comma separated string',
+      );
+    }
+
+    const itemIds = [
+      ...new Set(
+        raw
+          .map((item) => (typeof item === 'string' ? item.trim() : ''))
+          .filter(Boolean),
+      ),
+    ];
+
+    if (!itemIds.length) {
+      throw new BadRequestException('ids is required');
+    }
+
+    if (itemIds.length > max) {
+      throw new BadRequestException(`ids allows at most ${max} values`);
+    }
+
+    return itemIds;
   }
 
   getProductPerformance(params: { [key: string]: string | undefined }) {
