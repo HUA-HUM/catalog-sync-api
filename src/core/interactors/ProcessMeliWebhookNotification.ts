@@ -11,6 +11,7 @@ import {
 } from 'src/app/drivers/repositories/processBull/catalogBackfill/CatalogBackfill.queue';
 import { MeliWebhookLogger } from 'src/app/drivers/repositories/processBull/webhooks/MeliWebhook.logger';
 
+import { QUEUE_RETENTION } from 'src/app/drivers/repositories/processBull/queue.retention';
 type PendingNotification = {
   itemId: string;
   payload: MeliWebhookPayload;
@@ -176,7 +177,7 @@ export class ProcessMeliWebhookNotification {
           attempts: 5,
           backoff: { type: 'exponential', delay: 5000 },
           removeOnComplete: true,
-          removeOnFail: false,
+          removeOnFail: QUEUE_RETENTION.removeOnFail,
         },
       );
     }

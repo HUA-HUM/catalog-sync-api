@@ -1,4 +1,5 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
+import { QUEUE_RETENTION } from 'src/app/drivers/repositories/processBull/queue.retention';
 import {
   ItemsVisitsJobs,
   ItemsVisitsQueue,
@@ -21,8 +22,8 @@ export class ItemsVisitsService {
           type: 'exponential',
           delay: 3000,
         },
-        removeOnComplete: false,
-        removeOnFail: false,
+        removeOnComplete: QUEUE_RETENTION.removeOnComplete,
+        removeOnFail: QUEUE_RETENTION.removeOnFail,
       },
     );
 
