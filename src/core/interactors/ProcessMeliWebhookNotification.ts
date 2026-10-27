@@ -21,8 +21,21 @@ export class ProcessMeliWebhookNotification {
     private readonly catalogRepository: IUpsertMeliCatalogRepository,
   ) {}
 
+  /**
+   * Topics que representan un cambio real sobre la publicacion y obligan a
+   * releer el producto. `items_prices` y `public_offers` son los que llegan
+   * cuando cambia el precio de lista o entra/sale una promocion.
+   * `price_suggestion` y `public_candidates` quedan afuera a proposito: son
+   * sugerencias e invitaciones, no cambios efectivos.
+   */
+  private static readonly REFETCH_TOPICS = new Set([
+    'items',
+    'items_prices',
+    'public_offers',
+  ]);
+
   async execute(payload: MeliWebhookPayload): Promise<void> {
-    if (payload.topic === 'items') {
+    if (ProcessMeliWebhookNotification.REFETCH_TOPICS.has(payload.topic)) {
       await this.processItemNotification(payload);
       return;
     }

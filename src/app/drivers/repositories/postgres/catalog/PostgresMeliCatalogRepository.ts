@@ -350,14 +350,18 @@ export class PostgresMeliCatalogRepository
         expiration_time,
         sync_status,
         last_synced_at,
-        raw
+        raw,
+        price_updated_at,
+        original_price_updated_at
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
         $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
         $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
         $31, $32, $33, $34, $35, $36, $37, $38, $39, $40,
-        $41, $42, $43, $44, 'synced', now(), $45
+        $41, $42, $43, $44, 'synced', now(), $45,
+        CASE WHEN $11 IS NOT NULL THEN now() END,
+        CASE WHEN $13 IS NOT NULL THEN now() END
       )
       ON CONFLICT (seller_id, item_id) DO UPDATE SET
         site_id = EXCLUDED.site_id,
@@ -404,7 +408,19 @@ export class PostgresMeliCatalogRepository
         expiration_time = EXCLUDED.expiration_time,
         sync_status = EXCLUDED.sync_status,
         last_synced_at = EXCLUDED.last_synced_at,
-        raw = EXCLUDED.raw
+        raw = EXCLUDED.raw,
+        -- Solo se mueven cuando el valor cambia de verdad. IS DISTINCT FROM
+        -- para que entrar o salir de una promocion (NULL <-> valor) cuente.
+        price_updated_at = CASE
+          WHEN meli_items.price IS DISTINCT FROM EXCLUDED.price
+          THEN now()
+          ELSE meli_items.price_updated_at
+        END,
+        original_price_updated_at = CASE
+          WHEN meli_items.original_price IS DISTINCT FROM EXCLUDED.original_price
+          THEN now()
+          ELSE meli_items.original_price_updated_at
+        END
       `,
       [
         sellerId,
