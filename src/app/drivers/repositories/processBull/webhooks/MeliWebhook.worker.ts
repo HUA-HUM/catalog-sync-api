@@ -26,7 +26,10 @@ export function startMeliWebhookWorker(
     },
     {
       connection: bullmqConnection,
-      concurrency: Number(process.env.MELI_WEBHOOK_WORKER_CONCURRENCY ?? 5),
+      // Alta a proposito: cada job solo deja su MLA en el lote del interactor
+      // y espera. Sin suficientes jobs en vuelo el lote nunca se llena y se
+      // vuelve a pedir de a uno. Tiene que superar MELI_WEBHOOK_BATCH_SIZE.
+      concurrency: Number(process.env.MELI_WEBHOOK_WORKER_CONCURRENCY ?? 200),
     },
   );
 
