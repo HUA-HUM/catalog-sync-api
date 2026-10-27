@@ -21,6 +21,7 @@ import type {
 } from 'src/core/adapters/postgres/orders/IUpsertMeliOrdersRepository';
 import type { IUpsertMeliVisitsRepository } from 'src/core/adapters/postgres/visits/IUpsertMeliVisitsRepository';
 
+import { QUEUE_RETENTION } from 'src/app/drivers/repositories/processBull/queue.retention';
 type ScanProductsResponse = {
   seller_id: string | number;
   items: string[];
@@ -144,7 +145,7 @@ export class ProcessCatalogBackfill {
             attempts: 5,
             backoff: { type: 'exponential', delay: 5000 },
             removeOnComplete: true,
-            removeOnFail: false,
+            removeOnFail: QUEUE_RETENTION.removeOnFail,
           },
         );
       }
@@ -248,7 +249,7 @@ export class ProcessCatalogBackfill {
             attempts: 5,
             backoff: { type: 'exponential', delay: 5000 },
             removeOnComplete: true,
-            removeOnFail: false,
+            removeOnFail: QUEUE_RETENTION.removeOnFail,
           },
         );
         ordersJobs++;
@@ -267,7 +268,7 @@ export class ProcessCatalogBackfill {
             attempts: 5,
             backoff: { type: 'exponential', delay: 5000 },
             removeOnComplete: true,
-            removeOnFail: false,
+            removeOnFail: QUEUE_RETENTION.removeOnFail,
           },
         );
         visitsJobs++;
@@ -296,16 +297,17 @@ export class ProcessCatalogBackfill {
     );
 
     while (true) {
-      const response = await this.getFromMeliWithRetry<MeliProductOrdersResponse>(
-        `/meli/products/${payload.itemId}/orders`,
-        {
-          params: {
-            offset,
-            limit: payload.limit,
-            status: payload.status,
+      const response =
+        await this.getFromMeliWithRetry<MeliProductOrdersResponse>(
+          `/meli/products/${payload.itemId}/orders`,
+          {
+            params: {
+              offset,
+              limit: payload.limit,
+              status: payload.status,
+            },
           },
-        },
-      );
+        );
 
       const orders = response.results ?? [];
       if (!orders.length) break;
@@ -386,15 +388,12 @@ export class ProcessCatalogBackfill {
           attempts: 5,
           backoff: { type: 'exponential', delay: 5000 },
           removeOnComplete: true,
-          removeOnFail: false,
+          removeOnFail: QUEUE_RETENTION.removeOnFail,
         },
       );
     }
 
-    await this.logJob(
-      job,
-      `[visits-refresh] queuedVisits=${items.length}`,
-    );
+    await this.logJob(job, `[visits-refresh] queuedVisits=${items.length}`);
   }
 
   private chunk<T>(items: T[], size: number): T[][] {

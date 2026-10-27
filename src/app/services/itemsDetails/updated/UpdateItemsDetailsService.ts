@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import { UPDATE_ITEMS_DETAILS_QUEUE_NAME } from 'src/app/drivers/repositories/processBull/ItemsDetail/updated/UpdatedDetailsJob.queue';
 
+import { QUEUE_RETENTION } from 'src/app/drivers/repositories/processBull/queue.retention';
 @Injectable()
 export class UpdateItemsDetailsService {
   constructor(
@@ -20,7 +21,7 @@ export class UpdateItemsDetailsService {
           delay: 5000,
         },
         removeOnComplete: true,
-        removeOnFail: false,
+        removeOnFail: QUEUE_RETENTION.removeOnFail,
       },
     );
 

@@ -1,5 +1,6 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import type { IMeliHttpClient } from 'src/core/adapters/mercadolibre-api/http/IMeliHttpClient';
+import { QUEUE_RETENTION } from 'src/app/drivers/repositories/processBull/queue.retention';
 import type {
   IUpsertMeliCatalogRepository,
   MeliBulkProduct,
@@ -69,8 +70,8 @@ export class CatalogBackfillService {
           type: 'exponential',
           delay: 10000,
         },
-        removeOnComplete: false,
-        removeOnFail: false,
+        removeOnComplete: QUEUE_RETENTION.removeOnComplete,
+        removeOnFail: QUEUE_RETENTION.removeOnFail,
       },
     );
 
@@ -123,7 +124,7 @@ export class CatalogBackfillService {
           attempts: 5,
           backoff: { type: 'exponential', delay: 5000 },
           removeOnComplete: true,
-          removeOnFail: false,
+          removeOnFail: QUEUE_RETENTION.removeOnFail,
         },
       );
     }
@@ -167,7 +168,7 @@ export class CatalogBackfillService {
           attempts: 5,
           backoff: { type: 'exponential', delay: 5000 },
           removeOnComplete: true,
-          removeOnFail: false,
+          removeOnFail: QUEUE_RETENTION.removeOnFail,
         },
       );
     }
@@ -202,7 +203,7 @@ export class CatalogBackfillService {
           attempts: 5,
           backoff: { type: 'exponential', delay: 5000 },
           removeOnComplete: true,
-          removeOnFail: false,
+          removeOnFail: QUEUE_RETENTION.removeOnFail,
         },
       );
     }
@@ -241,7 +242,7 @@ export class CatalogBackfillService {
         attempts: 3,
         backoff: { type: 'exponential', delay: 5000 },
         removeOnComplete: true,
-        removeOnFail: false,
+        removeOnFail: QUEUE_RETENTION.removeOnFail,
       },
     );
 
@@ -281,7 +282,7 @@ export class CatalogBackfillService {
         attempts: 3,
         backoff: { type: 'exponential', delay: 5000 },
         removeOnComplete: true,
-        removeOnFail: false,
+        removeOnFail: QUEUE_RETENTION.removeOnFail,
       },
     );
   }

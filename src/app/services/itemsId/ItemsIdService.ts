@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { QUEUE_RETENTION } from 'src/app/drivers/repositories/processBull/queue.retention';
 import {
   ItemsIdJobs,
   ItemsIdQueue,
@@ -27,8 +28,8 @@ export class ItemsIdService {
           delay: 3000,
         },
 
-        removeOnComplete: false,
-        removeOnFail: false,
+        removeOnComplete: QUEUE_RETENTION.removeOnComplete,
+        removeOnFail: QUEUE_RETENTION.removeOnFail,
       },
     );
 
