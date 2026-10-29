@@ -52,6 +52,15 @@ export class ProcessMeliWebhookNotification {
     process.env.MELI_WEBHOOK_BATCH_WAIT_MS ?? 400,
   );
 
+  /**
+   * Ids por llamada HTTP. El lote acumulado se parte en pedazos de este
+   * tamanio: el proxy devuelve vacio con lotes grandes y el backfill ya venia
+   * pidiendo de a 20.
+   */
+  private static readonly BULK_CHUNK_SIZE = Number(
+    process.env.MELI_BULK_CHUNK_SIZE ?? 20,
+  );
+
   private pending: PendingNotification[] = [];
   private timer: NodeJS.Timeout | null = null;
 
@@ -116,33 +125,75 @@ export class ProcessMeliWebhookNotification {
     if (!batch.length) return;
 
     const itemIds = [...new Set(batch.map((entry) => entry.itemId))];
+    const products: MeliBulkProduct[] = [];
 
-    try {
-      const products = await this.meliHttpClient.get<MeliBulkProduct[]>(
-        '/meli/products/bulk',
-        { params: { ids: itemIds.join(',') } },
-      );
+    /**
+     * Ids cuya consulta fallo a nivel HTTP. Solo esos jobs se rechazan: un id
+     * que simplemente no vuelve en la respuesta no es un error reintentable
+     * (la publicacion puede no existir mas), y tratarlo como tal hacia que un
+     * lote entero se reintentara en loop sin avanzar nunca.
+     */
+    const failedIds = new Set<string>();
+    let lastError: unknown = null;
 
-      if (!Array.isArray(products) || !products.length) {
-        throw new Error(
-          `Meli bulk returned no products for ${itemIds.length} ids. first=${itemIds[0]}`,
+    // El proxy no sostiene lotes grandes: el backfill ya pide de a 20.
+    for (const chunk of this.chunk(
+      itemIds,
+      ProcessMeliWebhookNotification.BULK_CHUNK_SIZE,
+    )) {
+      try {
+        const chunkProducts = await this.meliHttpClient.get<MeliBulkProduct[]>(
+          '/meli/products/bulk',
+          { params: { ids: chunk.join(',') } },
+        );
+
+        if (Array.isArray(chunkProducts)) {
+          products.push(...chunkProducts);
+        }
+      } catch (error) {
+        lastError = error;
+        chunk.forEach((itemId) => failedIds.add(itemId));
+        MeliWebhookLogger.error(
+          `bulk chunk failed ids=${chunk.length} first=${chunk[0]}`,
+          error,
         );
       }
-
-      await this.catalogRepository.upsertProducts(products);
-      MeliWebhookLogger.processing(
-        `synced batch items=${itemIds.length} products=${products.length} notifications=${batch.length}`,
-      );
-
-      await this.enqueueOrders(products, batch);
-
-      batch.forEach((entry) => entry.resolve());
-    } catch (error) {
-      // Falla todo el lote: cada job reintenta por su cuenta y, al reintentar
-      // de a pocos, los ids sanos se resuelven igual.
-      MeliWebhookLogger.error(`batch failed items=${itemIds.length}`, error);
-      batch.forEach((entry) => entry.reject(error));
     }
+
+    try {
+      if (products.length) {
+        await this.catalogRepository.upsertProducts(products);
+        await this.enqueueOrders(products, batch);
+      }
+
+      MeliWebhookLogger.processing(
+        `synced batch items=${itemIds.length} products=${products.length} notifications=${batch.length} failed=${failedIds.size}`,
+      );
+    } catch (error) {
+      // Fallo el upsert: eso si es reintentable para todo el lote.
+      MeliWebhookLogger.error(
+        `batch upsert failed items=${itemIds.length}`,
+        error,
+      );
+      batch.forEach((entry) => entry.reject(error));
+      return;
+    }
+
+    batch.forEach((entry) => {
+      if (failedIds.has(entry.itemId)) {
+        entry.reject(lastError);
+        return;
+      }
+      entry.resolve();
+    });
+  }
+
+  private chunk<T>(items: T[], size: number): T[][] {
+    const chunks: T[][] = [];
+    for (let i = 0; i < items.length; i += size) {
+      chunks.push(items.slice(i, i + size));
+    }
+    return chunks;
   }
 
   private async enqueueOrders(
