@@ -350,18 +350,14 @@ export class PostgresMeliCatalogRepository
         expiration_time,
         sync_status,
         last_synced_at,
-        raw,
-        price_updated_at,
-        original_price_updated_at
+        raw
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
         $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
         $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
         $31, $32, $33, $34, $35, $36, $37, $38, $39, $40,
-        $41, $42, $43, $44, 'synced', now(), $45,
-        CASE WHEN $11 IS NOT NULL THEN now() END,
-        CASE WHEN $13 IS NOT NULL THEN now() END
+        $41, $42, $43, $44, 'synced', now(), $45
       )
       ON CONFLICT (seller_id, item_id) DO UPDATE SET
         site_id = EXCLUDED.site_id,
@@ -411,6 +407,15 @@ export class PostgresMeliCatalogRepository
         raw = EXCLUDED.raw,
         -- Solo se mueven cuando el valor cambia de verdad. IS DISTINCT FROM
         -- para que entrar o salir de una promocion (NULL <-> valor) cuente.
+        --
+        -- A proposito van solo aca y no en el INSERT: alla habia que mirar el
+        -- parametro ($11, $13) dentro de un CASE, y Postgres no puede deducir
+        -- su tipo de forma consistente cuando el mismo parametro ya alimenta
+        -- una columna numeric. Eso rompia todos los upsert con
+        -- "inconsistent types deduced for parameter". Aca se comparan columnas
+        -- ya tipadas, no parametros, asi que no hay nada que deducir. En un
+        -- alta quedan en NULL, que es correcto: no sabemos cuando cambio algo
+        -- que estamos viendo por primera vez.
         price_updated_at = CASE
           WHEN meli_items.price IS DISTINCT FROM EXCLUDED.price
           THEN now()
