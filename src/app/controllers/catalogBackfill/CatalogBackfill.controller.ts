@@ -1,5 +1,6 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
-import { ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import { ApiBody, ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
+import { InternalApiKeyGuard } from 'src/app/guards/InternalApiKey.guard';
 import { CatalogBackfillService } from 'src/app/services/catalogBackfill/CatalogBackfillService';
 
 class ScanItemsPageDto {
@@ -8,6 +9,10 @@ class ScanItemsPageDto {
 }
 
 class SyncDetailsByIdsDto {
+  ids: string[];
+}
+
+class ResyncDto {
   ids: string[];
 }
 
@@ -72,7 +77,8 @@ export class CatalogBackfillController {
 
   @Post('details/resume-missing')
   @ApiOperation({
-    summary: 'Encola detalles para MLAs que ya estan en Postgres pero no tienen detalle',
+    summary:
+      'Encola detalles para MLAs que ya estan en Postgres pero no tienen detalle',
   })
   @ApiBody({
     schema: {
@@ -112,7 +118,8 @@ export class CatalogBackfillController {
 
   @Post('visits/resume-missing')
   @ApiOperation({
-    summary: 'Encola visitas para productos sincronizados sin visitas guardadas',
+    summary:
+      'Encola visitas para productos sincronizados sin visitas guardadas',
   })
   @ApiBody({
     schema: {
@@ -178,7 +185,8 @@ export class CatalogBackfillController {
 
   @Post('items/scan-page')
   @ApiOperation({
-    summary: 'Trae una página de MLAs desde Meli y los guarda como pending_detail',
+    summary:
+      'Trae una página de MLAs desde Meli y los guarda como pending_detail',
   })
   @ApiBody({
     schema: {
@@ -192,6 +200,25 @@ export class CatalogBackfillController {
       limit: body.limit,
       scrollId: body.scrollId,
     });
+  }
+
+  @Post('items/resync')
+  @UseGuards(InternalApiKeyGuard)
+  @ApiSecurity('internal-api-key')
+  @ApiOperation({
+    summary: 'Resincroniza publicaciones ya mismo, por MLA o por SKU',
+    description:
+      'Trae los productos de Meli y los escribe en Postgres de forma sincronica, sin pasar por la cola. Acepta MLAs y SKUs mezclados; un SKU puede resolver a varias publicaciones. Maximo 200 valores.',
+  })
+  @ApiBody({
+    schema: {
+      example: {
+        ids: ['MLA1424202023', 'B0C33CHG99'],
+      },
+    },
+  })
+  resync(@Body() body: ResyncDto) {
+    return this.service.resyncByIdsOrSkus(body?.ids);
   }
 
   @Post('items/details-by-ids')

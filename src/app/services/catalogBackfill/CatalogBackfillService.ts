@@ -344,6 +344,108 @@ export class CatalogBackfillService {
     };
   }
 
+  /**
+   * Resincroniza publicaciones ya mismo, sin pasar por la cola. Sirve para
+   * recuperar un item cuya notificacion fallo y para adelantarse a un webhook
+   * todavia encolado.
+   *
+   * Acepta MLAs y SKUs mezclados: lo que matchea MLA\d+ se usa directo (asi
+   * funciona tambien con una publicacion que todavia no esta en la base), y el
+   * resto se resuelve contra meli_items, donde un SKU puede mapear a varios
+   * MLA.
+   */
+  async resyncByIdsOrSkus(values: unknown) {
+    const raw = Array.isArray(values)
+      ? values
+      : typeof values === 'string'
+        ? values.split(',')
+        : null;
+
+    if (!raw) {
+      throw new BadRequestException(
+        'ids must be an array or a comma separated string',
+      );
+    }
+
+    const clean = [
+      ...new Set(
+        raw
+          .map((value) => (typeof value === 'string' ? value.trim() : ''))
+          .filter(Boolean),
+      ),
+    ];
+
+    if (!clean.length) {
+      throw new BadRequestException('ids is required');
+    }
+
+    if (clean.length > 200) {
+      throw new BadRequestException('ids allows at most 200 values');
+    }
+
+    const itemIds = clean.filter((value) => /^MLA\d+$/.test(value));
+    const skus = clean.filter((value) => !/^MLA\d+$/.test(value));
+
+    const bySku = skus.length
+      ? await this.catalogRepository.findItemsBySkus(skus)
+      : [];
+
+    const resolved = [...new Set([...itemIds, ...bySku.map((i) => i.itemId)])];
+    const skusSinPublicacion = skus.filter(
+      (sku) => !bySku.some((item) => item.sku === sku),
+    );
+
+    if (!resolved.length) {
+      return {
+        requested: clean.length,
+        resolved_items: 0,
+        synced: 0,
+        not_found: clean,
+        items: [],
+      };
+    }
+
+    const products: MeliBulkProduct[] = [];
+
+    // De a 20, igual que el resto del backfill: el proxy no sostiene lotes grandes.
+    for (let i = 0; i < resolved.length; i += 20) {
+      const chunk = resolved.slice(i, i + 20);
+      const chunkProducts = await this.meliHttpClient.get<MeliBulkProduct[]>(
+        '/meli/products/bulk',
+        { params: { ids: chunk.join(',') } },
+      );
+
+      if (Array.isArray(chunkProducts)) {
+        products.push(...chunkProducts);
+      }
+    }
+
+    if (products.length) {
+      await this.catalogRepository.upsertProducts(products);
+    }
+
+    const synced = new Set(products.map((product) => product.id));
+
+    return {
+      requested: clean.length,
+      resolved_items: resolved.length,
+      synced: products.length,
+      not_found: [
+        ...skusSinPublicacion,
+        ...resolved.filter((itemId) => !synced.has(itemId)),
+      ],
+      items: products.map((product) => ({
+        itemId: product.id,
+        sku: product.sellerSku ?? product.seller_custom_field ?? null,
+        title: product.title,
+        status: product.status,
+        price: product.price,
+        originalPrice: product.original_price ?? null,
+        stock: product.stock,
+      })),
+    };
+  }
+
   async syncDetailsByIds(ids: string[]) {
     const cleanIds = [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
 

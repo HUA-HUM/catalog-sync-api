@@ -108,6 +108,13 @@ export type MeliCatalogSyncAudit = {
 
 export interface IUpsertMeliCatalogRepository {
   upsertProducts(products: MeliBulkProduct[]): Promise<void>;
+  findItemsBySkus(skus: string[]): Promise<
+    {
+      sellerId: number;
+      itemId: string;
+      sku: string;
+    }[]
+  >;
   upsertPendingItems(params: {
     sellerId: number | string;
     itemIds: string[];

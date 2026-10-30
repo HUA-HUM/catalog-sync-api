@@ -10,9 +10,7 @@ import {
 import { POSTGRES_POOL } from 'src/app/modules/database/Database.module';
 
 @Injectable()
-export class PostgresMeliCatalogRepository
-  implements IUpsertMeliCatalogRepository
-{
+export class PostgresMeliCatalogRepository implements IUpsertMeliCatalogRepository {
   constructor(@Inject(POSTGRES_POOL) private readonly pool: Pool) {}
 
   async upsertPendingItems(params: {
@@ -33,6 +31,42 @@ export class PostgresMeliCatalogRepository
       `,
       [values.map(([value]) => value), values.map(([, value]) => value)],
     );
+  }
+
+  /**
+   * Un mismo SKU puede estar publicado varias veces, asi que esto devuelve
+   * todos los MLA que lo tengan. El SKU vive indistintamente en seller_sku o
+   * en seller_custom_field, igual que en la vista de analytics.
+   */
+  async findItemsBySkus(skus: string[]): Promise<
+    {
+      sellerId: number;
+      itemId: string;
+      sku: string;
+    }[]
+  > {
+    if (!skus.length) return [];
+
+    const result = await this.pool.query<{
+      seller_id: string;
+      item_id: string;
+      sku: string;
+    }>(
+      `
+      SELECT i.seller_id, i.item_id,
+             COALESCE(i.seller_sku, i.seller_custom_field) AS sku
+      FROM meli_items i
+      WHERE COALESCE(i.seller_sku, i.seller_custom_field) = ANY($1::text[])
+      ORDER BY i.item_id
+      `,
+      [skus],
+    );
+
+    return result.rows.map((row) => ({
+      sellerId: Number(row.seller_id),
+      itemId: row.item_id,
+      sku: row.sku,
+    }));
   }
 
   async findItemsMissingDetails(limit?: number): Promise<
