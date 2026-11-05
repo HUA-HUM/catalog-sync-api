@@ -12,6 +12,7 @@ import type {
   ProductLookupQuery,
   ProductPerformanceQuery,
   ProductPerformanceSortField,
+  ProductsBySkuQuery,
   ProductVisitsBulkQuery,
   ProductVisitsPageQuery,
 } from 'src/core/adapters/postgres/analytics/IAnalyticsRepository';
@@ -227,6 +228,26 @@ export class AnalyticsService {
     const query: ProductLookupQuery = { itemIds };
 
     return this.analyticsRepository.getProductsLookup(query);
+  }
+
+  getProductsBySku(sellerId?: string, sku?: string) {
+    const parsedSellerId = Number(sellerId);
+    const parsedSku = this.parseText(sku);
+
+    if (!Number.isSafeInteger(parsedSellerId) || parsedSellerId <= 0) {
+      throw new BadRequestException('sellerId is required');
+    }
+
+    if (!parsedSku) {
+      throw new BadRequestException('sku is required');
+    }
+
+    const query: ProductsBySkuQuery = {
+      sellerId: parsedSellerId,
+      sku: parsedSku,
+    };
+
+    return this.analyticsRepository.getProductsBySku(query);
   }
 
   getProductsVisitsBulk(ids?: unknown) {

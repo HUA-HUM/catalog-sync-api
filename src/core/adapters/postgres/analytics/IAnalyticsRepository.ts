@@ -122,6 +122,11 @@ export type ProductLookupQuery = {
   itemIds: string[];
 };
 
+export type ProductsBySkuQuery = {
+  sellerId: number;
+  sku: string;
+};
+
 export type ProductVisitsBulkQuery = {
   itemIds: string[];
 };
@@ -151,6 +156,7 @@ export interface IAnalyticsRepository {
   getMissingData(): Promise<unknown>;
   getProductPerformance(params: ProductPerformanceQuery): Promise<unknown>;
   getProductsLookup(params: ProductLookupQuery): Promise<unknown>;
+  getProductsBySku(params: ProductsBySkuQuery): Promise<unknown>;
   getProductsVisitsBulk(params: ProductVisitsBulkQuery): Promise<unknown>;
   getProductsVisitsPage(params: ProductVisitsPageQuery): Promise<unknown>;
 }

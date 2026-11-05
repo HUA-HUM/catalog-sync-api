@@ -27,6 +27,31 @@ export class AnalyticsProductsController {
     return this.service.getProductsLookup(ids);
   }
 
+  @Get('by-sku')
+  @UseGuards(InternalApiKeyGuard)
+  @ApiSecurity('internal-api-key')
+  @ApiOperation({
+    summary:
+      'Todas las publicaciones de un SKU, con descripcion, atributos e imagenes',
+    description:
+      'Lee meli_items y meli_item_details directamente, con coincidencia exacta de SKU. Un SKU puede tener varias publicaciones: el consumidor elige cual usar segun listingTypeId y status. Si no tiene detalle sincronizado, description, attributes y pictures vienen en null. Requiere el header x-internal-api-key.',
+  })
+  @ApiQuery({
+    name: 'sellerId',
+    required: true,
+    description: 'Seller de Mercado Libre. Permite usar los indices por SKU',
+    example: 1757836744,
+  })
+  @ApiQuery({
+    name: 'sku',
+    required: true,
+    description: 'SKU exacto del producto',
+    example: 'B0BYZX8X9H',
+  })
+  bySku(@Query('sellerId') sellerId?: string, @Query('sku') sku?: string) {
+    return this.service.getProductsBySku(sellerId, sku);
+  }
+
   @Get('performance')
   @ApiOperation({
     summary:
