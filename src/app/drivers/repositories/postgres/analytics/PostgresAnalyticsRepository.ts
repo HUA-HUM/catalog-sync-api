@@ -12,6 +12,7 @@ import {
   IAnalyticsRepository,
   ProductLookupQuery,
   ProductPerformanceQuery,
+  ProductsBySkuQuery,
   ProductVisitsBulkQuery,
   ProductVisitsPageQuery,
 } from 'src/core/adapters/postgres/analytics/IAnalyticsRepository';
@@ -1814,6 +1815,88 @@ export class PostgresAnalyticsRepository implements IAnalyticsRepository {
       found: products.length,
       not_found: params.itemIds.filter((itemId) => !found.has(itemId)),
       products,
+    };
+  }
+
+  /**
+   * LEFT JOIN porque un item puede no tener detalle sincronizado todavia: el
+   * consumidor decide que hacer con description, attributes y pictures en null.
+   *
+   * El WHERE equivale a COALESCE(seller_sku, seller_custom_field) = sku, pero
+   * escrito asi usa idx_meli_items_sku. Con el COALESCE recorreria toda la
+   * tabla, y esto se llama una vez por job.
+   */
+  async getProductsBySku(params: ProductsBySkuQuery): Promise<unknown> {
+    const result = await this.pool.query<{
+      item_id: string;
+      seller_id: string;
+      sku: string;
+      listing_type_id: string | null;
+      status: string | null;
+      title: string | null;
+      brand: string | null;
+      category_id: string | null;
+      category_path: string | null;
+      price: string | null;
+      base_price: string | null;
+      stock: number | null;
+      description: string | null;
+      attributes: unknown;
+      pictures: unknown;
+    }>(
+      `
+      SELECT
+        i.item_id,
+        i.seller_id,
+        COALESCE(i.seller_sku, i.seller_custom_field) AS sku,
+        i.listing_type_id,
+        i.status,
+        i.title,
+        i.brand,
+        i.category_id,
+        c.path AS category_path,
+        i.price,
+        i.base_price,
+        i.stock,
+        d.description,
+        d.attributes,
+        d.pictures
+      FROM meli_items i
+      LEFT JOIN meli_item_details d
+        ON d.seller_id = i.seller_id
+       AND d.item_id = i.item_id
+      LEFT JOIN meli_categories c
+        ON c.id = i.category_id
+      WHERE i.seller_id = $1
+        AND (
+          i.seller_sku = $2
+          OR (i.seller_sku IS NULL AND i.seller_custom_field = $2)
+        )
+      ORDER BY i.item_id
+      `,
+      [params.sellerId, params.sku],
+    );
+
+    return {
+      sku: params.sku,
+      found: result.rows.length,
+      products: result.rows.map((row) => ({
+        itemId: row.item_id,
+        sellerId: Number(row.seller_id),
+        sku: row.sku,
+        listingTypeId: row.listing_type_id,
+        status: row.status,
+        title: row.title,
+        brand: row.brand,
+        categoryId: row.category_id,
+        categoryPath: row.category_path,
+        price: row.price === null ? null : Number(row.price),
+        basePrice: row.base_price === null ? null : Number(row.base_price),
+        stock: row.stock,
+        description: row.description,
+        attributes: row.attributes,
+        pictures: row.pictures,
+      })),
     };
   }
 
