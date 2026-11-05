@@ -13,6 +13,7 @@ import type {
   ProductPerformanceQuery,
   ProductPerformanceSortField,
   ProductsBySkuQuery,
+  ProductVisitHistoryQuery,
   ProductVisitsBulkQuery,
   ProductVisitsPageQuery,
 } from 'src/core/adapters/postgres/analytics/IAnalyticsRepository';
@@ -270,6 +271,42 @@ export class AnalyticsService {
     };
 
     return this.analyticsRepository.getProductsVisitsPage(query);
+  }
+
+  getProductsVisitHistory(params: {
+    ids?: string;
+    skus?: string;
+    from?: string;
+    to?: string;
+    limit?: string;
+    offset?: string;
+  }) {
+    const itemIds = this.parseList(params.ids);
+    const skus = this.parseList(params.skus);
+
+    if (!itemIds && !skus) {
+      throw new BadRequestException('ids or skus is required');
+    }
+
+    const query: ProductVisitHistoryQuery = {
+      itemIds,
+      skus,
+      from: this.parseDate(params.from, 'from'),
+      to: this.parseDate(params.to, 'to'),
+      limit: this.parseNumber(params.limit, 'limit', {
+        defaultValue: 1000,
+        min: 1,
+        max: 20000,
+        integer: true,
+      }),
+      offset: this.parseNumber(params.offset, 'offset', {
+        defaultValue: 0,
+        min: 0,
+        integer: true,
+      }),
+    };
+
+    return this.analyticsRepository.getProductsVisitHistory(query);
   }
 
   /**

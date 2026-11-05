@@ -13,6 +13,7 @@ import {
   ProductLookupQuery,
   ProductPerformanceQuery,
   ProductsBySkuQuery,
+  ProductVisitHistoryQuery,
   ProductVisitsBulkQuery,
   ProductVisitsPageQuery,
 } from 'src/core/adapters/postgres/analytics/IAnalyticsRepository';
@@ -1965,6 +1966,125 @@ export class PostgresAnalyticsRepository implements IAnalyticsRepository {
       has_next: hasNext,
       next_cursor: hasNext ? visits[visits.length - 1].itemId : null,
       visits,
+    };
+  }
+
+  /**
+   * Historial de visitas tal como quedo guardado en meli_item_visit_snapshots.
+   *
+   * La tabla tiene ~36M filas y su unico indice util es
+   * (seller_id, item_id, captured_at DESC): sin seller_id la consulta degenera
+   * en un scan completo. Por eso primero se resuelven los pares
+   * (seller_id, item_id) contra meli_item_visits_current, que si tiene indice
+   * por item_id solo, y despues se lee el historial acotado a esos pares.
+   *
+   * No se calculan deltas a proposito: total_visits es lo que devolvio Meli en
+   * cada captura y todavia no esta confirmado que sea un acumulado, asi que
+   * restar dos capturas podria dar un numero falso. Se devuelve la serie cruda.
+   */
+  async getProductsVisitHistory(
+    params: ProductVisitHistoryQuery,
+  ): Promise<unknown> {
+    const itemIds = params.itemIds ?? [];
+    const skus = params.skus ?? [];
+
+    const targets = await this.pool.query<{
+      seller_id: string;
+      item_id: string;
+      sku: string | null;
+    }>(
+      `
+      SELECT v.seller_id, v.item_id, COALESCE(i.seller_sku, i.seller_custom_field) AS sku
+      FROM meli_item_visits_current v
+      LEFT JOIN meli_items i
+        ON i.seller_id = v.seller_id
+       AND i.item_id = v.item_id
+      WHERE cardinality($1::text[]) > 0
+        AND v.item_id = ANY($1::text[])
+      UNION
+      SELECT i.seller_id, i.item_id, COALESCE(i.seller_sku, i.seller_custom_field) AS sku
+      FROM meli_items i
+      WHERE cardinality($2::text[]) > 0
+        AND COALESCE(i.seller_sku, i.seller_custom_field) = ANY($2::text[])
+      `,
+      [itemIds, skus],
+    );
+
+    const skuByItemId = new Map(
+      targets.rows.map((row) => [row.item_id, row.sku]),
+    );
+    const sellerIds = [...new Set(targets.rows.map((row) => row.seller_id))];
+    const resolvedItemIds = [...skuByItemId.keys()].sort();
+
+    const notFoundIds = itemIds.filter((itemId) => !skuByItemId.has(itemId));
+    const resolvedSkus = new Set(
+      targets.rows.map((row) => row.sku).filter((sku): sku is string => !!sku),
+    );
+    const notFoundSkus = skus.filter((sku) => !resolvedSkus.has(sku));
+
+    if (!resolvedItemIds.length) {
+      return {
+        requested_ids: itemIds.length,
+        requested_skus: skus.length,
+        items_found: 0,
+        not_found_ids: notFoundIds,
+        not_found_skus: notFoundSkus,
+        from: params.from ?? null,
+        to: params.to ?? null,
+        count: 0,
+        limit: params.limit,
+        offset: params.offset,
+        has_next: false,
+        snapshots: [],
+      };
+    }
+
+    const result = await this.pool.query<{
+      item_id: string;
+      total_visits: number;
+      captured_at: Date;
+    }>(
+      `
+      SELECT s.item_id, s.total_visits, s.captured_at
+      FROM meli_item_visit_snapshots s
+      WHERE s.seller_id = ANY($1::bigint[])
+        AND s.item_id = ANY($2::text[])
+        AND ($3::timestamptz IS NULL OR s.captured_at >= $3::timestamptz)
+        AND ($4::timestamptz IS NULL OR s.captured_at < $4::timestamptz)
+      ORDER BY s.item_id, s.captured_at
+      LIMIT $5
+      OFFSET $6
+      `,
+      [
+        sellerIds,
+        resolvedItemIds,
+        params.from ?? null,
+        params.to ?? null,
+        params.limit,
+        params.offset,
+      ],
+    );
+
+    const snapshots = result.rows.map((row) => ({
+      itemId: row.item_id,
+      sku: skuByItemId.get(row.item_id) ?? null,
+      visits: Number(row.total_visits),
+      capturedAt: row.captured_at,
+    }));
+
+    return {
+      requested_ids: itemIds.length,
+      requested_skus: skus.length,
+      items_found: resolvedItemIds.length,
+      not_found_ids: notFoundIds,
+      not_found_skus: notFoundSkus,
+      from: params.from ?? null,
+      to: params.to ?? null,
+      count: snapshots.length,
+      limit: params.limit,
+      offset: params.offset,
+      has_next: snapshots.length === params.limit,
+      snapshots,
     };
   }
 

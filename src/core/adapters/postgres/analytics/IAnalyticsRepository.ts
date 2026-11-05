@@ -136,6 +136,15 @@ export type ProductVisitsPageQuery = {
   afterItemId?: string;
 };
 
+export type ProductVisitHistoryQuery = {
+  itemIds?: string[];
+  skus?: string[];
+  from?: string;
+  to?: string;
+  limit: number;
+  offset: number;
+};
+
 export interface IAnalyticsRepository {
   getCatalogSummary(): Promise<unknown>;
   getTableFreshness(staleAfterHours: number): Promise<unknown>;
@@ -159,4 +168,5 @@ export interface IAnalyticsRepository {
   getProductsBySku(params: ProductsBySkuQuery): Promise<unknown>;
   getProductsVisitsBulk(params: ProductVisitsBulkQuery): Promise<unknown>;
   getProductsVisitsPage(params: ProductVisitsPageQuery): Promise<unknown>;
+  getProductsVisitHistory(params: ProductVisitHistoryQuery): Promise<unknown>;
 }

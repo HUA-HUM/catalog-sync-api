@@ -52,6 +52,65 @@ export class AnalyticsProductsController {
     return this.service.getProductsBySku(sellerId, sku);
   }
 
+  @Get('visit-history')
+  @UseGuards(InternalApiKeyGuard)
+  @ApiSecurity('internal-api-key')
+  @ApiOperation({
+    summary:
+      'Historial de visitas por MLA o SKU desde meli_item_visit_snapshots',
+    description:
+      'Devuelve la serie cruda de capturas: una fila por (MLA, captured_at) con el valor de visitas que devolvio Meli en ese momento. ' +
+      'Hay aproximadamente una captura por item cada varios dias desde 2026-05-28. ' +
+      'IMPORTANTE: total_visits NO esta confirmado como acumulado historico. Se observaron items cuyo valor baja entre dos capturas, ' +
+      'lo que indica que Meli devuelve una ventana movil (tipo ultimos N dias). Restar dos capturas para estimar "visitas del periodo" ' +
+      'puede dar un numero incorrecto hasta que se confirme la ventana con el proxy de Meli. Por eso este endpoint no calcula deltas. ' +
+      'Requiere el header x-internal-api-key.',
+  })
+  @ApiQuery({
+    name: 'ids',
+    required: false,
+    description: 'Uno o varios MLA separados por coma (maximo 100)',
+    example: 'MLA1538120729,MLA1424202023',
+  })
+  @ApiQuery({
+    name: 'skus',
+    required: false,
+    description:
+      'Uno o varios SKU separados por coma (maximo 100). Resuelve a todos los MLA que comparten ese SKU.',
+    example: 'B0C33CHG99',
+  })
+  @ApiQuery({
+    name: 'from',
+    required: false,
+    description: 'Captura desde (inclusive), ISO',
+    example: '2026-10-01',
+  })
+  @ApiQuery({
+    name: 'to',
+    required: false,
+    description: 'Captura hasta (exclusive), ISO',
+    example: '2026-11-01',
+  })
+  @ApiQuery({ name: 'limit', required: false, example: 1000 })
+  @ApiQuery({ name: 'offset', required: false, example: 0 })
+  visitHistory(
+    @Query('ids') ids?: string,
+    @Query('skus') skus?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    return this.service.getProductsVisitHistory({
+      ids,
+      skus,
+      from,
+      to,
+      limit,
+      offset,
+    });
+  }
+
   @Get('performance')
   @ApiOperation({
     summary:
