@@ -20,6 +20,12 @@ import type {
 } from 'src/core/adapters/postgres/marketplace/IMarketplaceProductsRepository';
 
 const MAX_BULK_ITEMS = 1000;
+// Lo que entra en numeric(15,2) y en integer
+const MAX_PRICE = 9_999_999_999_999.99;
+const MAX_STOCK = 2_147_483_647;
+// JSON.stringify deja estos dos como escape, y jsonb no acepta ninguno: un
+// caracter nulo o la mitad de un emoji cortado. El lookbehind saltea "\\\\u0000".
+const UNSTORABLE_TEXT = /(?<!\\)(?:\\\\)*\\u(?:0000|d[89a-f][0-9a-f]{2})/i;
 const LIST_LIMITS = { defaultLimit: 100, maxLimit: 500 };
 const UNIQUE_VIOLATION = '23505';
 
@@ -42,6 +48,11 @@ export interface CreateMarketplaceProductBody extends MarketplaceProductBody {
   marketplace?: unknown;
 }
 
+export interface MarketplaceProductRejection {
+  externalId: string | null;
+  reason: string;
+}
+
 export interface ListMarketplaceProductsParams {
   marketplace?: string;
   limit?: string;
@@ -59,11 +70,11 @@ export class MarketplaceProductsService {
 
   async bulkUpsert(body?: BulkMarketplaceProductsBody) {
     const marketplace = parseRequiredText(body?.marketplace, 'marketplace');
-    const items = this.parseItems(body?.items);
+    const { items, rejected } = this.parseItems(body?.items);
 
     await this.repository.bulkUpsert(marketplace, items);
 
-    return { marketplace, saved: items.length };
+    return { marketplace, saved: items.length, rejected };
   }
 
   async create(body?: CreateMarketplaceProductBody) {
@@ -143,7 +154,11 @@ export class MarketplaceProductsService {
     };
   }
 
-  private parseItems(value: unknown): MarketplaceProductInput[] {
+  /* Un producto invalido no frena al resto: vuelve en rejected con su motivo */
+  private parseItems(value: unknown): {
+    items: MarketplaceProductInput[];
+    rejected: MarketplaceProductRejection[];
+  } {
     if (!Array.isArray(value) || !value.length) {
       throw new BadRequestException('items must not be empty');
     }
@@ -154,19 +169,36 @@ export class MarketplaceProductsService {
       );
     }
 
-    const items = value.map((item: MarketplaceProductBody, index) =>
-      this.parseItem(item ?? {}, `items[${index}]`),
-    );
+    const items: MarketplaceProductInput[] = [];
+    const rejected: MarketplaceProductRejection[] = [];
+
+    value.forEach((item: MarketplaceProductBody | null, index) => {
+      try {
+        items.push(this.parseItem(item ?? {}, `items[${index}]`));
+      } catch (error) {
+        if (!(error instanceof BadRequestException)) throw error;
+
+        rejected.push({
+          externalId: parseText(item?.externalId) ?? null,
+          reason: error.message,
+        });
+      }
+    });
 
     // Si un external_id viene repetido queda el ultimo: el upsert no acepta dos
-    return [...new Map(items.map((item) => [item.externalId, item])).values()];
+    return {
+      items: [
+        ...new Map(items.map((item) => [item.externalId, item])).values(),
+      ],
+      rejected,
+    };
   }
 
   private parseItem(
     item: MarketplaceProductBody,
     path: string,
   ): MarketplaceProductInput {
-    return {
+    const parsed = {
       externalId: parseRequiredText(item.externalId, `${path}.externalId`),
       sellerSku: parseRequiredText(item.sellerSku, `${path}.sellerSku`),
       marketplaceSku: parseText(item.marketplaceSku) ?? null,
@@ -175,6 +207,12 @@ export class MarketplaceProductsService {
       status: parseRequiredText(item.status, `${path}.status`),
       raw: this.parseRaw(item.raw, `${path}.raw`),
     };
+
+    if (UNSTORABLE_TEXT.test(JSON.stringify(parsed))) {
+      throw new BadRequestException(`${path} has text that cannot be stored`);
+    }
+
+    return parsed;
   }
 
   private parseChanges(body: MarketplaceProductBody) {
@@ -219,12 +257,20 @@ export class MarketplaceProductsService {
       throw new BadRequestException(`${field} must be a number`);
     }
 
+    if (Math.abs(value) > MAX_PRICE) {
+      throw new BadRequestException(`${field} is out of range`);
+    }
+
     return value;
   }
 
   private parseStock(value: unknown, field: string): number {
     if (typeof value !== 'number' || !Number.isSafeInteger(value)) {
       throw new BadRequestException(`${field} must be an integer`);
+    }
+
+    if (Math.abs(value) > MAX_STOCK) {
+      throw new BadRequestException(`${field} is out of range`);
     }
 
     return value;

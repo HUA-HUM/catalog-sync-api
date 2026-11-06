@@ -49,7 +49,7 @@ export class MarketplaceProductsController {
   @ApiOperation({
     summary: 'Guarda productos de un marketplace, creando o actualizando',
     description:
-      'Identifica cada producto por marketplace + externalId. Maximo 1000 productos por llamada. Si uno es invalido, no se guarda ninguno. Requiere el header x-internal-api-key.',
+      'Identifica cada producto por marketplace + externalId. Maximo 1000 productos por llamada. Los invalidos no frenan al resto: se guardan los validos y los otros vuelven en rejected con su motivo, asi que un 200 no significa que se guardaron todos. Requiere el header x-internal-api-key.',
   })
   @ApiBody({
     schema: {
