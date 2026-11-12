@@ -9,6 +9,7 @@ import {
   CatalogBackfillScanPayload,
   CatalogBackfillVisitsRefreshPayload,
   CatalogBackfillVisitsPayload,
+  CatalogBackfillVisitsChunkPayload,
 } from 'src/app/drivers/repositories/processBull/catalogBackfill/CatalogBackfill.queue';
 import type { IMeliHttpClient } from 'src/core/adapters/mercadolibre-api/http/IMeliHttpClient';
 import type {
@@ -34,6 +35,20 @@ type ScanProductsResponse = {
 
 @Injectable()
 export class ProcessCatalogBackfill {
+  /** Publicaciones por job. Ver CatalogBackfillVisitsChunkPayload. */
+  private static readonly VISITS_CHUNK_SIZE = Number(
+    process.env.VISITS_REFRESH_CHUNK_SIZE ?? 50,
+  );
+
+  /**
+   * Llamadas a Meli en vuelo dentro de un mismo lote. Multiplica por la
+   * concurrencia del worker: 5 x 5 = 25 en vuelo. Con ~1s por llamada eso son
+   * ~2,1M visitas por dia, suficiente para las 1.248.321 publicaciones activas.
+   */
+  private static readonly VISITS_CHUNK_PARALLELISM = Number(
+    process.env.VISITS_CHUNK_PARALLELISM ?? 5,
+  );
+
   constructor(
     @Inject('IMeliHttpClient')
     private readonly meliHttpClient: IMeliHttpClient,
@@ -61,6 +76,11 @@ export class ProcessCatalogBackfill {
         return;
       case CatalogBackfillJobs.SYNC_VISITS_FOR_ITEM:
         await this.syncVisitsForItem(job as Job<CatalogBackfillVisitsPayload>);
+        return;
+      case CatalogBackfillJobs.SYNC_VISITS_CHUNK:
+        await this.syncVisitsChunk(
+          job as Job<CatalogBackfillVisitsChunkPayload>,
+        );
         return;
       case CatalogBackfillJobs.ENQUEUE_VISITS_REFRESH:
         await this.enqueueVisitsRefresh(
@@ -368,23 +388,25 @@ export class ProcessCatalogBackfill {
     const items = await this.catalogRepository.findItemsForVisitsRefresh({
       staleAfterDays: payload.staleAfterDays,
       limit: payload.limit,
+      statuses: payload.statuses,
     });
 
     await this.logJob(
       job,
-      `[visits-refresh] staleAfterDays=${payload.staleAfterDays} selected=${items.length} limit=${payload.limit ?? 'none'}`,
+      `[visits-refresh] staleAfterDays=${payload.staleAfterDays} statuses=${payload.statuses?.join('|') ?? 'all'} selected=${items.length} limit=${payload.limit ?? 'none'}`,
     );
 
-    for (const item of items) {
+    const chunks = this.chunk(items, ProcessCatalogBackfill.VISITS_CHUNK_SIZE);
+
+    for (const [index, chunkItems] of chunks.entries()) {
       await CatalogBackfillQueue.add(
-        CatalogBackfillJobs.SYNC_VISITS_FOR_ITEM,
+        CatalogBackfillJobs.SYNC_VISITS_CHUNK,
         {
           runId: payload.runId,
-          sellerId: item.sellerId,
-          itemId: item.itemId,
+          items: chunkItems,
         },
         {
-          jobId: `visits-refresh-${item.itemId}`,
+          jobId: `${payload.runId}-visits-chunk-${index}`,
           attempts: 5,
           backoff: { type: 'exponential', delay: 5000 },
           removeOnComplete: true,
@@ -393,7 +415,83 @@ export class ProcessCatalogBackfill {
       );
     }
 
-    await this.logJob(job, `[visits-refresh] queuedVisits=${items.length}`);
+    await this.logJob(
+      job,
+      `[visits-refresh] items=${items.length} chunks=${chunks.length} chunkSize=${ProcessCatalogBackfill.VISITS_CHUNK_SIZE}`,
+    );
+  }
+
+  /**
+   * Resuelve las visitas de un lote de publicaciones.
+   *
+   * Una publicacion que falla no arrastra al lote entero: se cuenta y se sigue.
+   * Esto es a proposito. Si se rechazara el job por un solo item, los 50 se
+   * reintentarian juntos y el lote volveria a formarse igual, girando en vacio
+   * sin avanzar nunca; es el mismo error que tuvimos en la cola de webhooks.
+   * Como no se actualiza su captured_at, el item fallido vuelve a entrar en la
+   * seleccion de la pasada siguiente por si solo.
+   *
+   * Solo si fallan todas se rechaza el job, porque eso ya no es una publicacion
+   * rota sino el proxy caido, y ahi el reintento con backoff sirve.
+   */
+  private async syncVisitsChunk(
+    job: Job<CatalogBackfillVisitsChunkPayload>,
+  ): Promise<void> {
+    const payload = job.data;
+    const items = payload.items ?? [];
+
+    if (!items.length) return;
+
+    await this.logJob(job, `[visits-chunk] start items=${items.length}`);
+
+    let ok = 0;
+    const failures: string[] = [];
+    let lastError: unknown = null;
+    let cursor = 0;
+
+    const worker = async (): Promise<void> => {
+      while (cursor < items.length) {
+        const item = items[cursor++];
+
+        try {
+          const visit = await this.getFromMeliWithRetry<{
+            item_id: string;
+            total: number;
+          }>(`/meli/items/${item.itemId}/visits`);
+
+          await this.visitsRepository.upsertCurrentAndSnapshot({
+            sellerId: item.sellerId,
+            visit,
+          });
+
+          ok++;
+        } catch (error) {
+          lastError = error;
+          failures.push(item.itemId);
+        }
+      }
+    };
+
+    const lanes = Math.min(
+      ProcessCatalogBackfill.VISITS_CHUNK_PARALLELISM,
+      items.length,
+    );
+
+    await Promise.all(Array.from({ length: lanes }, () => worker()));
+
+    await this.logJob(
+      job,
+      `[visits-chunk] done ok=${ok} failed=${failures.length}` +
+        (failures.length ? ` first=${failures[0]}` : ''),
+    );
+
+    if (!ok && failures.length) {
+      throw lastError instanceof Error
+        ? lastError
+        : new Error(`visits chunk failed for all ${failures.length} items`);
+    }
+
+    await job.updateProgress(100);
   }
 
   private chunk<T>(items: T[], size: number): T[][] {

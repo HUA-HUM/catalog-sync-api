@@ -217,12 +217,34 @@ export class CatalogBackfillService {
     };
   }
 
+  /**
+   * Umbral por defecto de la pasada de visitas: 18 h, no 24 h.
+   *
+   * Con la pasada diaria y un umbral de 1 dia exacto, lo capturado ayer apenas
+   * mas tarde que la hora del cron no llega a las 24 h y se saltea un dia.
+   */
+  private static readonly VISITS_STALE_DAYS_DEFAULT = Number(
+    process.env.VISITS_REFRESH_STALE_DAYS ?? 0.75,
+  );
+
+  /** Estados que reciben visitas. `closed` son 615.348 publicaciones de menos. */
+  private static readonly VISITS_STATUSES_DEFAULT = (
+    process.env.VISITS_REFRESH_STATUSES ?? 'active,paused,under_review'
+  )
+    .split(',')
+    .map((status) => status.trim())
+    .filter(Boolean);
+
   async enqueueVisitsRefresh(params: {
     staleAfterDays?: number;
     limit?: number;
+    statuses?: string[];
   }) {
     const runId = `catalog-visits-refresh-${Date.now()}`;
-    const staleAfterDays = params.staleAfterDays ?? 4;
+    const staleAfterDays =
+      params.staleAfterDays ?? CatalogBackfillService.VISITS_STALE_DAYS_DEFAULT;
+    const statuses =
+      params.statuses ?? CatalogBackfillService.VISITS_STATUSES_DEFAULT;
 
     this.validateOptionalLimit(params.limit);
 
@@ -236,6 +258,7 @@ export class CatalogBackfillService {
         runId,
         staleAfterDays,
         limit: params.limit,
+        statuses,
       },
       {
         jobId: `${runId}-enqueue`,
@@ -252,39 +275,38 @@ export class CatalogBackfillService {
       job_id: job.id,
       queue: 'catalog-backfill',
       stale_after_days: staleAfterDays,
+      statuses,
       limit: params.limit,
     };
   }
 
-  async ensureRecurringVisitsRefresh() {
-    if (process.env.VISITS_REFRESH_ENABLED !== 'true') {
-      return;
+  /**
+   * Borra el scheduler recurrente que antes vivia en Redis.
+   *
+   * El horario ahora esta en el codigo (CatalogRefreshCron), que es el punto:
+   * un scheduler guardado en Redis desaparece sin dejar rastro si Redis lo
+   * desaloja, y eso fue exactamente lo que paso el 06/11/2026. Se borra el
+   * viejo para no terminar con las dos cosas disparando la misma pasada.
+   */
+  async removeLegacyRecurringVisitsRefresh(): Promise<void> {
+    try {
+      const schedulers = await CatalogBackfillQueue.getJobSchedulers(0, 100);
+
+      for (const scheduler of schedulers) {
+        if (scheduler.key) {
+          await CatalogBackfillQueue.removeJobScheduler(scheduler.key);
+          console.log(
+            `[CatalogBackfill] scheduler viejo de Redis borrado: ${scheduler.key}`,
+          );
+        }
+      }
+    } catch (error) {
+      // No es critico: si falla, el cron del codigo igual corre.
+      console.error(
+        '[CatalogBackfill] no se pudo limpiar el scheduler viejo',
+        error,
+      );
     }
-
-    const staleAfterDays = Number(process.env.VISITS_REFRESH_STALE_DAYS ?? 4);
-    const limit = Number(process.env.VISITS_REFRESH_BATCH_SIZE ?? 50000);
-    const everyMs = Number(
-      process.env.VISITS_REFRESH_SCHEDULER_EVERY_MS ?? 60 * 60 * 1000,
-    );
-
-    await CatalogBackfillQueue.add(
-      CatalogBackfillJobs.ENQUEUE_VISITS_REFRESH,
-      {
-        runId: 'catalog-visits-refresh-recurring',
-        staleAfterDays,
-        limit,
-      },
-      {
-        jobId: 'catalog-visits-refresh-recurring',
-        repeat: {
-          every: everyMs,
-        },
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 5000 },
-        removeOnComplete: true,
-        removeOnFail: QUEUE_RETENTION.removeOnFail,
-      },
-    );
   }
 
   async getTodaySyncAudit(params: {

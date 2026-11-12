@@ -140,6 +140,7 @@ export interface IUpsertMeliCatalogRepository {
   findItemsForVisitsRefresh(params: {
     staleAfterDays: number;
     limit?: number;
+    statuses?: string[];
   }): Promise<
     {
       sellerId: number;

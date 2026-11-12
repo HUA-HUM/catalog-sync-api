@@ -155,22 +155,34 @@ export class PostgresMeliCatalogRepository implements IUpsertMeliCatalogReposito
     }));
   }
 
+  /**
+   * Publicaciones cuya captura de visitas ya vencio.
+   *
+   * `staleAfterDays` es double precision, no int, para poder pedir fracciones
+   * de dia. Con una pasada diaria a las 03:00 y un umbral de 1 dia exacto, una
+   * publicacion capturada ayer a las 03:30 todavia no llega a las 24 h y queda
+   * afuera: recien entra al dia siguiente, y la cobertura se va corriendo. Con
+   * 0.75 (18 h) entra siempre.
+   *
+   * `statuses` acota la pasada a los estados que interesan. Las 615.348
+   * publicaciones `closed` no reciben visitas, y dejarlas afuera baja la pasada
+   * diaria de 2.080.000 a 1.248.321 llamadas.
+   *
+   * Todos los parametros van casteados explicitamente. Un parametro sin tipo
+   * dentro de la query es lo que rompio upsertProduct en octubre: Postgres no
+   * pudo inferir su tipo y fallaron todos los upserts durante tres dias.
+   * `LIMIT NULL` es valido y equivale a no tener limite.
+   */
   async findItemsForVisitsRefresh(params: {
     staleAfterDays: number;
     limit?: number;
+    statuses?: string[];
   }): Promise<
     {
       sellerId: number;
       itemId: string;
     }[]
   > {
-    const values: unknown[] = [params.staleAfterDays];
-    const limitSql = params.limit ? 'LIMIT $2' : '';
-
-    if (params.limit) {
-      values.push(params.limit);
-    }
-
     const result = await this.pool.query<{
       seller_id: number;
       item_id: string;
@@ -182,14 +194,19 @@ export class PostgresMeliCatalogRepository implements IUpsertMeliCatalogReposito
         ON v.seller_id = i.seller_id
        AND v.item_id = i.item_id
       WHERE i.sync_status = 'synced'
+        AND ($2::text[] IS NULL OR i.status = ANY($2::text[]))
         AND (
           v.item_id IS NULL
-          OR v.captured_at <= now() - ($1::int * interval '1 day')
+          OR v.captured_at <= now() - ($1::double precision * interval '1 day')
         )
       ORDER BY v.captured_at ASC NULLS FIRST, i.item_id ASC
-      ${limitSql}
+      LIMIT $3::bigint
       `,
-      values,
+      [
+        params.staleAfterDays,
+        params.statuses?.length ? params.statuses : null,
+        params.limit ?? null,
+      ],
     );
 
     return result.rows.map((row) => ({
