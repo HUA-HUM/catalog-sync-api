@@ -21,6 +21,7 @@ import type {
   MeliProductOrdersResponse,
 } from 'src/core/adapters/postgres/orders/IUpsertMeliOrdersRepository';
 import type { IUpsertMeliVisitsRepository } from 'src/core/adapters/postgres/visits/IUpsertMeliVisitsRepository';
+import { MeliApiError } from 'src/core/drivers/mercadolibre-api/http/error/MeliApiError';
 
 import { QUEUE_RETENTION } from 'src/app/drivers/repositories/processBull/queue.retention';
 type ScanProductsResponse = {
@@ -35,18 +36,18 @@ type ScanProductsResponse = {
 
 @Injectable()
 export class ProcessCatalogBackfill {
-  /** Publicaciones por job. Ver CatalogBackfillVisitsChunkPayload. */
+  /**
+   * Publicaciones por job. El proxy acepta hasta 500 ids por pedido y los
+   * resuelve contra Meli de a 50, asi que un job = un pedido HTTP.
+   * Cubrir las 1.248.321 activas pasa de 1.248.321 llamadas a ~2.500.
+   */
   private static readonly VISITS_CHUNK_SIZE = Number(
-    process.env.VISITS_REFRESH_CHUNK_SIZE ?? 50,
+    process.env.VISITS_REFRESH_CHUNK_SIZE ?? 500,
   );
 
-  /**
-   * Llamadas a Meli en vuelo dentro de un mismo lote. Multiplica por la
-   * concurrencia del worker: 5 x 5 = 25 en vuelo. Con ~1s por llamada eso son
-   * ~2,1M visitas por dia, suficiente para las 1.248.321 publicaciones activas.
-   */
-  private static readonly VISITS_CHUNK_PARALLELISM = Number(
-    process.env.VISITS_CHUNK_PARALLELISM ?? 5,
+  /** Espera cuando Meli limita y no dice cuanto. */
+  private static readonly RATE_LIMIT_FALLBACK_SECONDS = Number(
+    process.env.MELI_RATE_LIMIT_FALLBACK_SECONDS ?? 60,
   );
 
   constructor(
@@ -422,17 +423,18 @@ export class ProcessCatalogBackfill {
   }
 
   /**
-   * Resuelve las visitas de un lote de publicaciones.
+   * Resuelve las visitas de un lote con una sola llamada al proxy.
    *
-   * Una publicacion que falla no arrastra al lote entero: se cuenta y se sigue.
-   * Esto es a proposito. Si se rechazara el job por un solo item, los 50 se
-   * reintentarian juntos y el lote volveria a formarse igual, girando en vacio
-   * sin avanzar nunca; es el mismo error que tuvimos en la cola de webhooks.
-   * Como no se actualiza su captured_at, el item fallido vuelve a entrar en la
-   * seleccion de la pasada siguiente por si solo.
+   * Antes era una llamada por publicacion. Meli limita ese endpoint y nos
+   * devolvia 429 en ~40% de los pedidos; con el backoff, la pasada completa
+   * tardaba unas 69 horas y nunca terminaba en el dia. El proxy ahora expone
+   * GET /meli/items/visits?ids=... con hasta 500 ids, asi que el mismo trabajo
+   * son ~2.500 pedidos y entra en una pasada de minutos.
    *
-   * Solo si fallan todas se rechaza el job, porque eso ya no es una publicacion
-   * rota sino el proxy caido, y ahi el reintento con backoff sirve.
+   * Lo que el proxy no devuelva se omite en silencio a proposito: no se
+   * escribe un 0, porque un 0 escrito es indistinguible de "no tiene visitas"
+   * y pisaria el ultimo valor bueno. Al no tocarle el captured_at, la
+   * publicacion vuelve a entrar en la seleccion de la pasada siguiente.
    */
   private async syncVisitsChunk(
     job: Job<CatalogBackfillVisitsChunkPayload>,
@@ -444,54 +446,37 @@ export class ProcessCatalogBackfill {
 
     await this.logJob(job, `[visits-chunk] start items=${items.length}`);
 
-    let ok = 0;
-    const failures: string[] = [];
-    let lastError: unknown = null;
-    let cursor = 0;
+    const sellerId = items[0].sellerId;
+    const itemIds = items.map((item) => item.itemId);
 
-    const worker = async (): Promise<void> => {
-      while (cursor < items.length) {
-        const item = items[cursor++];
+    const response = await this.getFromMeliWithRetry<
+      { item_id: string; total: number }[]
+    >('/meli/items/visits', { params: { ids: itemIds.join(',') } });
 
-        try {
-          const visit = await this.getFromMeliWithRetry<{
-            item_id: string;
-            total: number;
-          }>(`/meli/items/${item.itemId}/visits`);
-
-          await this.visitsRepository.upsertCurrentAndSnapshot({
-            sellerId: item.sellerId,
-            visit,
-          });
-
-          ok++;
-        } catch (error) {
-          lastError = error;
-          failures.push(item.itemId);
-        }
-      }
-    };
-
-    const lanes = Math.min(
-      ProcessCatalogBackfill.VISITS_CHUNK_PARALLELISM,
-      items.length,
+    const visits = (Array.isArray(response) ? response : []).filter(
+      (visit) => visit && typeof visit.item_id === 'string',
     );
 
-    await Promise.all(Array.from({ length: lanes }, () => worker()));
+    if (visits.length) {
+      await this.visitsRepository.upsertManyCurrentAndSnapshot({
+        sellerId,
+        visits,
+      });
+    }
+
+    const missing = itemIds.length - visits.length;
 
     await this.logJob(
       job,
-      `[visits-chunk] done ok=${ok} failed=${failures.length}` +
-        (failures.length ? ` first=${failures[0]}` : '') +
-        (lastError
-          ? ` lastError=${lastError instanceof Error ? lastError.message : String(lastError)}`
-          : ''),
+      `[visits-chunk] done requested=${itemIds.length} saved=${visits.length} missing=${missing}`,
     );
 
-    if (!ok && failures.length) {
-      throw lastError instanceof Error
-        ? lastError
-        : new Error(`visits chunk failed for all ${failures.length} items`);
+    // Si no vino ninguna habiendo pedido, es el proxy o Meli: conviene que el
+    // job falle y BullMQ lo reintente con backoff, no perder el lote entero.
+    if (!visits.length) {
+      throw new Error(
+        `visits bulk returned nothing for ${itemIds.length} ids (first=${itemIds[0]})`,
+      );
     }
 
     await job.updateProgress(100);
@@ -519,15 +504,24 @@ export class ProcessCatalogBackfill {
           throw error;
         }
 
-        const delayMs = attempt >= 3 ? 20000 : 5000;
+        // Con un 429 se espera lo que pide Meli, no el backoff propio.
+        // Reintentar antes solo vuelve a chocar contra el limite y gasta cuota:
+        // el proxy pide 60 s y el backoff fijo esperaba 5.
+        const rateLimitWaitMs =
+          error instanceof MeliApiError && error.isRateLimited
+            ? (error.retryAfterSeconds ??
+                ProcessCatalogBackfill.RATE_LIMIT_FALLBACK_SECONDS) * 1000
+            : null;
+
+        const delayMs = rateLimitWaitMs ?? (attempt >= 3 ? 20000 : 5000);
 
         // El motivo va en el log a proposito: sin el, un 500 del proxy y un
         // timeout se ven igual, y eso fue lo que hizo falta para diagnosticar
         // por que la pasada de visitas rinde seis veces menos de lo esperado.
         console.warn(
-          `[ProcessCatalogBackfill] Meli request failed | url=${url} | attempt=${attempt}/${maxAttempts} | retry_in_ms=${delayMs} | reason=${
-            error instanceof Error ? error.message : String(error)
-          }`,
+          `[ProcessCatalogBackfill] Meli request failed | url=${url} | attempt=${attempt}/${maxAttempts} | retry_in_ms=${delayMs}${
+            rateLimitWaitMs ? ' | rate_limited=true' : ''
+          } | reason=${error instanceof Error ? error.message : String(error)}`,
         );
 
         await this.sleep(delayMs);

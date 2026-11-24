@@ -14,9 +14,9 @@ export function startCatalogBackfillWorker(interactor: ProcessCatalogBackfill) {
     },
     {
       connection: bullmqConnection,
-      // 5 jobs de lote en paralelo x VISITS_CHUNK_PARALLELISM llamadas cada
-      // uno = 25 pedidos a Meli en vuelo. Con 5 y un job por publicacion el
-      // ritmo real era ~5/s, insuficiente para pasar las activas en un dia.
+      // Jobs en paralelo. Desde que el lote de visitas usa el endpoint bulk,
+      // cada job es un solo pedido HTTP de hasta 500 publicaciones, asi que
+      // esto ya no multiplica la presion sobre el limite de tasa de Meli.
       concurrency: Number(process.env.CATALOG_BACKFILL_CONCURRENCY ?? 5),
     },
   );

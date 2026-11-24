@@ -32,9 +32,8 @@ export class CatalogRefreshCron {
    * Visitas, todos los dias a las 03:00 de Argentina.
    *
    * Encola una pasada sobre las publicaciones cuya captura ya vencio. Son
-   * ~1.248.321 activas; con 25 llamadas en vuelo tarda unas 14 h, asi que entra
-   * en el dia pero ocupa buena parte de el. Si hiciera falta mas margen, el
-   * numero a subir es VISITS_CHUNK_PARALLELISM.
+   * ~1.248.321 activas, en lotes de 500 contra el endpoint bulk del proxy:
+   * ~2.500 pedidos HTTP, no 1.248.321 como antes.
    */
   @Cron(process.env.VISITS_REFRESH_CRON ?? '0 3 * * *', {
     name: 'visits-refresh-daily',

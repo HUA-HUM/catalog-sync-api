@@ -9,4 +9,10 @@ export interface IUpsertMeliVisitsRepository {
     visit: MeliItemVisitsResponse;
     capturedAt?: Date;
   }): Promise<void>;
+
+  upsertManyCurrentAndSnapshot(params: {
+    sellerId: number | string;
+    visits: MeliItemVisitsResponse[];
+    capturedAt?: Date;
+  }): Promise<void>;
 }
