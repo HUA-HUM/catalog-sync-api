@@ -281,6 +281,47 @@ export class CatalogBackfillService {
   }
 
   /**
+   * Estado del recolector de visitas, para que lo vigile un monitor.
+   *
+   * Devuelve la hora de la ultima captura y cuantos lotes quedan en la cola.
+   * Las dos cosas juntas distinguen los dos casos que de otro modo se
+   * confunden: si no hay capturas recientes y la cola esta vacia, la pasada
+   * termino; si no hay capturas recientes pero quedan lotes esperando, la
+   * pasada se corto y hay que mirar los logs.
+   */
+  async getVisitsCollectorHealth() {
+    const status = await this.catalogRepository.getVisitsCollectorStatus();
+
+    const counts = await CatalogBackfillQueue.getJobCounts(
+      'waiting',
+      'active',
+      'failed',
+    );
+
+    const staleAfterSeconds = Number(
+      process.env.VISITS_HEALTH_STALE_SECONDS ?? 15 * 60,
+    );
+
+    const seconds = status.secondsSinceLastCapture;
+    const pendientes = (counts.waiting ?? 0) + (counts.active ?? 0);
+    const sinCapturar = seconds === null || seconds > staleAfterSeconds;
+
+    return {
+      last_capture_at: status.lastCaptureAt,
+      seconds_since_last_capture: seconds,
+      stale: sinCapturar,
+      // Lo importante: cortada = hace rato que no captura PERO quedan lotes.
+      interrupted: sinCapturar && pendientes > 0,
+      queue: {
+        waiting: counts.waiting ?? 0,
+        active: counts.active ?? 0,
+        failed: counts.failed ?? 0,
+      },
+      stale_after_seconds: staleAfterSeconds,
+    };
+  }
+
+  /**
    * Borra el scheduler recurrente que antes vivia en Redis.
    *
    * El horario ahora esta en el codigo (CatalogRefreshCron), que es el punto:

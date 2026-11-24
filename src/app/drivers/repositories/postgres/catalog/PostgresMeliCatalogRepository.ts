@@ -215,6 +215,41 @@ export class PostgresMeliCatalogRepository implements IUpsertMeliCatalogReposito
     }));
   }
 
+  /**
+   * Hora de la ultima captura de visitas, para vigilar el recolector.
+   *
+   * Lee meli_item_visits_current y no meli_item_visit_snapshots a proposito.
+   * El dato es el mismo (las dos se escriben en la misma llamada), pero
+   * snapshots tiene 36M filas y su indice arranca por seller_id, asi que un
+   * max(captured_at) ahi es un scan de 5,5 s. Sobre current son 395 ms. Esto
+   * esta pensado para que lo consulte un monitor cada pocos minutos.
+   */
+  async getVisitsCollectorStatus(): Promise<{
+    lastCaptureAt: Date | null;
+    secondsSinceLastCapture: number | null;
+  }> {
+    const result = await this.pool.query<{
+      last_capture_at: Date | null;
+      seconds_since: string | null;
+    }>(
+      `
+      SELECT max(captured_at) AS last_capture_at,
+             EXTRACT(EPOCH FROM (now() - max(captured_at))) AS seconds_since
+      FROM meli_item_visits_current
+      `,
+    );
+
+    const row = result.rows[0];
+
+    return {
+      lastCaptureAt: row?.last_capture_at ?? null,
+      secondsSinceLastCapture:
+        row?.seconds_since === null || row?.seconds_since === undefined
+          ? null
+          : Math.round(Number(row.seconds_since)),
+    };
+  }
+
   async getDailySyncAudit(params: {
     date?: string;
     timezone: string;

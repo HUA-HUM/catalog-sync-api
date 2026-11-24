@@ -202,6 +202,16 @@ export class CatalogBackfillController {
     });
   }
 
+  @Get('visits/health')
+  @ApiOperation({
+    summary: 'Estado del recolector de visitas: ultima captura y cola',
+    description:
+      'Endpoint liviano para vigilar el recolector, pensado para que lo consulte un monitor cada pocos minutos. Sin api key, porque solo expone una fecha y unos contadores. Leer interrupted: true significa que hace rato que no se captura nada PERO quedan lotes en la cola, o sea que la pasada se corto a mitad de camino. Si stale es true e interrupted es false, la pasada simplemente termino.',
+  })
+  visitsHealth() {
+    return this.service.getVisitsCollectorHealth();
+  }
+
   @Post('items/resync')
   @UseGuards(InternalApiKeyGuard)
   @ApiSecurity('internal-api-key')

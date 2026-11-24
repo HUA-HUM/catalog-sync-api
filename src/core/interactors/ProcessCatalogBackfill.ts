@@ -482,7 +482,10 @@ export class ProcessCatalogBackfill {
     await this.logJob(
       job,
       `[visits-chunk] done ok=${ok} failed=${failures.length}` +
-        (failures.length ? ` first=${failures[0]}` : ''),
+        (failures.length ? ` first=${failures[0]}` : '') +
+        (lastError
+          ? ` lastError=${lastError instanceof Error ? lastError.message : String(lastError)}`
+          : ''),
     );
 
     if (!ok && failures.length) {
@@ -518,8 +521,13 @@ export class ProcessCatalogBackfill {
 
         const delayMs = attempt >= 3 ? 20000 : 5000;
 
+        // El motivo va en el log a proposito: sin el, un 500 del proxy y un
+        // timeout se ven igual, y eso fue lo que hizo falta para diagnosticar
+        // por que la pasada de visitas rinde seis veces menos de lo esperado.
         console.warn(
-          `[ProcessCatalogBackfill] Meli request failed | url=${url} | attempt=${attempt}/${maxAttempts} | retry_in_ms=${delayMs}`,
+          `[ProcessCatalogBackfill] Meli request failed | url=${url} | attempt=${attempt}/${maxAttempts} | retry_in_ms=${delayMs} | reason=${
+            error instanceof Error ? error.message : String(error)
+          }`,
         );
 
         await this.sleep(delayMs);

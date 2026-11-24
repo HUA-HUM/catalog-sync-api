@@ -147,6 +147,10 @@ export interface IUpsertMeliCatalogRepository {
       itemId: string;
     }[]
   >;
+  getVisitsCollectorStatus(): Promise<{
+    lastCaptureAt: Date | null;
+    secondsSinceLastCapture: number | null;
+  }>;
   getDailySyncAudit(params: {
     date?: string;
     timezone: string;
