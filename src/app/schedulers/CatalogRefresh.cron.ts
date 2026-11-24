@@ -40,6 +40,21 @@ export class CatalogRefreshCron {
     timeZone: 'America/Argentina/Buenos_Aires',
   })
   async refreshVisitsDaily(): Promise<void> {
+    // Interruptor para apagar solo las visitas, sin tocar el webhook.
+    //
+    // Encendido por defecto: se apaga poniendo VISITS_REFRESH_ENABLED=false,
+    // no se enciende poniendolo en true. La version anterior era al reves
+    // (`!== 'true'`) y como la variable no estaba en el .env del droplet, la
+    // recoleccion quedo apagada en silencio desde el 06/11 al 13/11 sin un
+    // solo error en los logs. Despues lo elimine por eso mismo, y el 24/11
+    // hizo falta justo esto para frenar el recolector sin parar la app entera.
+    if (process.env.VISITS_REFRESH_ENABLED === 'false') {
+      console.warn(
+        '[CatalogRefreshCron] visitas desactivadas por VISITS_REFRESH_ENABLED=false',
+      );
+      return;
+    }
+
     try {
       const result = await this.service.enqueueVisitsRefresh({});
       console.log(

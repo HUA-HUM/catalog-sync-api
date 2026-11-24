@@ -45,6 +45,28 @@ export class ProcessCatalogBackfill {
     process.env.VISITS_REFRESH_CHUNK_SIZE ?? 500,
   );
 
+  /**
+   * Proporcion de ceros a partir de la cual el lote se considera no confiable.
+   *
+   * El bulk del proxy devuelve `total: 0` tanto para "no tiene visitas" como
+   * para "Meli no me contesto", sin distinguirlos. El 24/11, con Meli
+   * limitando, lotes enteros volvieron 99,8% en cero y se escribieron como si
+   * fueran valores reales: 57.584 publicaciones perdieron su valor antes de
+   * que lo detectaramos.
+   *
+   * Un lote sano ronda el 50% de ceros, que es la proporcion real del catalogo
+   * (615.348 publicaciones cerradas mas una cola larga de activas sin
+   * trafico). Por encima de este umbral el lote se descarta entero y el job
+   * falla para que BullMQ lo reintente; no se escribe nada.
+   *
+   * Es una guarda, no la solucion: la solucion es que el proxy distinga los
+   * dos casos. Mientras no lo haga, esto es lo mejor que podemos afirmar desde
+   * aca sin poder leer la intencion de un 0.
+   */
+  private static readonly VISITS_MAX_ZERO_RATIO = Number(
+    process.env.VISITS_MAX_ZERO_RATIO ?? 0.9,
+  );
+
   /** Espera cuando Meli limita y no dice cuanto. */
   private static readonly RATE_LIMIT_FALLBACK_SECONDS = Number(
     process.env.MELI_RATE_LIMIT_FALLBACK_SECONDS ?? 60,
@@ -457,6 +479,28 @@ export class ProcessCatalogBackfill {
       (visit) => visit && typeof visit.item_id === 'string',
     );
 
+    // Un lote casi todo en cero no es un lote de publicaciones sin trafico:
+    // es Meli limitando y el proxy devolviendo 0 en vez de error. Escribirlo
+    // pisa valores buenos, asi que se descarta entero y se reintenta.
+    const zeros = visits.filter(
+      (visit) => Number(visit.total ?? 0) === 0,
+    ).length;
+    const zeroRatio = visits.length ? zeros / visits.length : 0;
+
+    if (
+      visits.length &&
+      zeroRatio > ProcessCatalogBackfill.VISITS_MAX_ZERO_RATIO
+    ) {
+      await this.logJob(
+        job,
+        `[visits-chunk] DESCARTADO requested=${itemIds.length} returned=${visits.length} zeros=${zeros} ratio=${zeroRatio.toFixed(3)}`,
+      );
+
+      throw new Error(
+        `visits bulk looks unreliable: ${zeros}/${visits.length} came back as 0 (max ratio ${ProcessCatalogBackfill.VISITS_MAX_ZERO_RATIO})`,
+      );
+    }
+
     if (visits.length) {
       await this.visitsRepository.upsertManyCurrentAndSnapshot({
         sellerId,
@@ -468,7 +512,7 @@ export class ProcessCatalogBackfill {
 
     await this.logJob(
       job,
-      `[visits-chunk] done requested=${itemIds.length} saved=${visits.length} missing=${missing}`,
+      `[visits-chunk] done requested=${itemIds.length} saved=${visits.length} missing=${missing} zeroRatio=${zeroRatio.toFixed(3)}`,
     );
 
     // Si no vino ninguna habiendo pedido, es el proxy o Meli: conviene que el
