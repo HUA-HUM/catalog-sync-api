@@ -72,6 +72,19 @@ export class ProcessCatalogBackfill {
     process.env.VISITS_MAX_ZERO_RATIO ?? 0.9,
   );
 
+  /**
+   * Devueltas minimas para que la proporcion de ceros signifique algo.
+   *
+   * La guarda divide por los ids devueltos, y desde el arreglo del proxy los
+   * que Meli no midio vienen omitidos, no en cero. Un lote que devuelve una
+   * sola publicacion con un 0 legitimo da ratio 1,0 y se descartaba por error:
+   * paso en produccion al reactivar el 25/11. Por debajo de esta muestra la
+   * proporcion es ruido y la guarda no opina.
+   */
+  private static readonly VISITS_ZERO_GUARD_MIN_SAMPLE = Number(
+    process.env.VISITS_ZERO_GUARD_MIN_SAMPLE ?? 20,
+  );
+
   /** Espera cuando Meli limita y no dice cuanto. */
   private static readonly RATE_LIMIT_FALLBACK_SECONDS = Number(
     process.env.MELI_RATE_LIMIT_FALLBACK_SECONDS ?? 60,
@@ -498,7 +511,7 @@ export class ProcessCatalogBackfill {
     const zeroRatio = visits.length ? zeros / visits.length : 0;
 
     if (
-      visits.length &&
+      visits.length >= ProcessCatalogBackfill.VISITS_ZERO_GUARD_MIN_SAMPLE &&
       zeroRatio > ProcessCatalogBackfill.VISITS_MAX_ZERO_RATIO
     ) {
       await this.logJob(
