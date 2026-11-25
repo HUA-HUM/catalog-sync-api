@@ -1,99 +1,136 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Catalog Sync API
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Microservicio interno de **Tienda Lo Quiero Acá** que mantiene en Postgres una copia del catálogo de Mercado Libre, y la deja consultable.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+Mercado Libre avisa cada vez que una publicación cambia; el servicio relee esa publicación y actualiza precio, stock, estado y detalle. Aparte, mide las visitas de cada publicación y guarda el historial. Encima de eso expone endpoints de consulta que el panel y otros servicios usan para no pegarle a Mercado Libre.
 
-## Description
+## Qué hace
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+| | |
+|---|---|
+| **Sincroniza publicaciones** | Escucha el webhook de Mercado Libre y actualiza precio, stock, estado, título y detalle en minutos. |
+| **Mide visitas** | Pasada diaria que guarda cuántas visitas tiene cada publicación, con historial desde mayo de 2026. |
+| **Trae ventas** | Guarda las órdenes de cada publicación para cruzarlas con visitas y stock. |
+| **Carga masiva** | Recorre el catálogo entero de Mercado Libre para la carga inicial o para recuperarse de un hueco. |
+| **Consultas** | Expone el catálogo por MLA, por SKU, por categoría y por marca, sin consumir cuota de Mercado Libre. |
+| **Otros marketplaces** | Guarda también el catálogo que otros procesos publican en Frávega, con sus corridas de import. |
 
-## Project setup
+## Cómo funciona
 
-```bash
-$ npm install
+```mermaid
+flowchart TD
+    subgraph tiempo_real [En minutos]
+        A([Mercado Libre avisa<br/>que algo cambio]) --> B[Se encola la notificacion]
+        B --> C[Se agrupan de a 100<br/>y se releen del proxy]
+        C --> D[(Postgres:<br/>precio, stock, estado, detalle)]
+    end
+
+    subgraph diario [Todos los dias 03:00]
+        E([Pasada de visitas]) --> F{Que publicaciones<br/>ya vencieron?}
+        F --> G[Nuevas: cada 1 dia<br/>Con visitas: cada 4<br/>El resto: cada 14]
+        G --> H[Lotes de 100 al proxy]
+        H --> D
+    end
+
+    subgraph semanal [Domingos 02:00]
+        I([Pasada de catalogo]) --> J[Recorre todas las publicaciones<br/>y relee su detalle]
+        J --> D
+    end
+
+    D --> K([Endpoints de consulta])
 ```
 
-## Compile and run the project
+El detalle de cada paso está en la [guía funcional](docs/funcional.md). Las visitas tienen su propia página porque son la parte con más sutilezas: [Visitas](docs/visitas.md).
+
+## Ambientes
+
+| Ambiente | URL base |
+|---|---|
+| Producción | `http://104.131.117.64:3001` |
+| Local | `http://localhost:3001` |
+
+Además de los endpoints, el servicio publica tres herramientas:
+
+| Herramienta | Ruta | Para qué |
+|---|---|---|
+| Documentación | `/docs` | Esta documentación, navegable y con buscador. |
+| Swagger | `/api/docs` | Probar los endpoints desde el navegador. |
+| Bull Board | `/admin/queues` | Ver el avance de las colas y los jobs fallidos. |
+
+> Swagger estaba en `/docs` hasta que esa ruta pasó a ser el sitio de documentación. Si lo tenías guardado, ahora es `/api/docs`.
+
+## Autenticación
+
+Los endpoints protegidos usan este header:
+
+| Header | Valor |
+|---|---|
+| `x-internal-api-key` | La clave interna del servicio (`INTERNAL_API_KEY`). |
+
+Sin el header, o con una clave que no coincide, la respuesta es `401 Invalid api key`. Si el servicio arrancó sin `INTERNAL_API_KEY` configurada, la respuesta es `401 INTERNAL_API_KEY is not configured`.
+
+No todos los endpoints están protegidos: la protección se aplica ruta por ruta para no romper consumidores que ya existían. La [referencia de la API](docs/api.md) indica cuáles la piden.
+
+## Primer llamado
+
+Lo más directo para ver si el servicio responde y tiene datos: pedir una publicación por su MLA.
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+curl -s -H "x-internal-api-key: $INTERNAL_API_KEY" \
+  "http://104.131.117.64:3001/analytics/products/lookup?ids=MLA1424202023"
 ```
 
-## Run tests
+Y para ver si la recolección de visitas está sana, sin necesidad de clave:
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+curl -s "http://104.131.117.64:3001/internal/catalog-backfill/visits/health"
 ```
 
-## Deployment
+## Documentación
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+**Catálogo**
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+| Documento | Qué explica |
+|---|---|
+| [Guía funcional](docs/funcional.md) | Qué se guarda de cada publicación, cómo llegan los cambios, cada cuánto se actualiza cada cosa, ventas, categorías, otros marketplaces, y qué el servicio no hace. |
+| [Visitas](docs/visitas.md) | Qué mide el número de visitas, por qué no se pueden restar dos fechas, los grupos de prioridad, el techo de Mercado Libre y los errores que ya cometimos. |
+
+**API**
+
+| Documento | Qué explica |
+|---|---|
+| [Referencia de la API](docs/api.md) | Todos los endpoints: consultas del catálogo, visitas, categorías, ventas, carga masiva, marketplaces y webhook, con ejemplos. |
+
+**Técnico**
+
+| Documento | Qué explica |
+|---|---|
+| [Arquitectura y configuración](docs/tecnico.md) | Capas del código, tablas, colas, reintentos, el proxy de Mercado Libre, variables de entorno y tests. |
+| [Operación](docs/operacion.md) | Dónde corre, deploy, cómo verificar que está sano y qué hacer ante los problemas conocidos. |
+
+## Desarrollo local
+
+Requisitos: Node.js 20 o superior, un Postgres y un Redis accesibles.
+
+El repositorio no trae un `.env.example`: las variables y sus valores por defecto están en [arquitectura y configuración](docs/tecnico.md#variables-de-entorno). Las únicas sin default son las credenciales de Postgres, Redis y el proxy de Mercado Libre.
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+npm install
+npm run start:dev       # http://localhost:3001
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+```bash
+npm test                # tests unitarios
+npm run lint            # eslint con --fix
+npx tsc --noEmit        # chequeo de tipos
+```
 
-## Resources
+Para ver esta documentación como sitio, sin levantar Postgres ni Redis:
 
-Check out a few resources that may come in handy when working with NestJS:
+```bash
+npm run docs:preview    # http://localhost:4310/docs
+```
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+## Stack
 
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
-# catalog-sync-api
+NestJS 11 · TypeScript · Postgres · BullMQ sobre Redis · Axios · Jest.
