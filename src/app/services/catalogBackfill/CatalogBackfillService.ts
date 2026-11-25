@@ -282,6 +282,15 @@ export class CatalogBackfillService {
       },
       {
         jobId: `${runId}-enqueue`,
+        // Se adelanta a toda la fila a proposito.
+        //
+        // Este job es el que arma la pasada, y los lotes que genera van a la
+        // misma cola. Sin esto queda detras del backlog del dia anterior: con
+        // 1.472 lotes pendientes y ~2,2 s cada uno, el cron de las 03:00
+        // arrancaba casi una hora tarde, y con una cola mas profunda el horario
+        // se corre horas. lifo hace RPUSH en vez de LPUSH y el worker consume
+        // de ese lado, asi que sale en el proximo turno.
+        lifo: true,
         attempts: 3,
         backoff: { type: 'exponential', delay: 5000 },
         removeOnComplete: true,
