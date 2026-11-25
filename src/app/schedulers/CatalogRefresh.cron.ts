@@ -31,9 +31,14 @@ export class CatalogRefreshCron {
   /**
    * Visitas, todos los dias a las 03:00 de Argentina.
    *
-   * Encola una pasada sobre las publicaciones cuya captura ya vencio. Son
-   * ~1.248.321 activas, en lotes de 500 contra el endpoint bulk del proxy:
-   * ~2.500 pedidos HTTP, no 1.248.321 como antes.
+   * Encola una pasada sobre las publicaciones cuya captura ya vencio: unas
+   * 1.248.321 activas, en lotes de 100 contra el endpoint bulk del proxy.
+   *
+   * El bulk ahorra viajes entre nuestros servicios, no llamadas a Meli: Meli
+   * solo acepta un id por llamada, asi que el piso lo pone su limite de tasa.
+   * Medido con el proxy arreglado: ~1.300 publicaciones/min con un consumidor
+   * secuencial, y entre un 35% y un 60% de cada lote vuelve omitida y se
+   * arrastra a la pasada siguiente.
    */
   @Cron(process.env.VISITS_REFRESH_CRON ?? '0 3 * * *', {
     name: 'visits-refresh-daily',

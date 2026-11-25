@@ -37,12 +37,17 @@ type ScanProductsResponse = {
 @Injectable()
 export class ProcessCatalogBackfill {
   /**
-   * Publicaciones por job. El proxy acepta hasta 500 ids por pedido y los
-   * resuelve contra Meli de a 50, asi que un job = un pedido HTTP.
-   * Cubrir las 1.248.321 activas pasa de 1.248.321 llamadas a ~2.500.
+   * Publicaciones por job. El maximo del proxy es 100: con 101 responde
+   * 400 "At most 100 itemIds per request".
+   *
+   * Importante para no sobreestimar lo que se gana: el bulk ahorra viajes
+   * entre nuestros servicios, no llamadas a Meli. Meli dejo de aceptar mas de
+   * un id por llamada en /visits/items (con dos o mas responde 400 "maximum
+   * amount of items to query is 1"), asi que el proxy igual hace una llamada
+   * por publicacion, de a 3 en paralelo. Medido: 100 ids en 5,3 s.
    */
   private static readonly VISITS_CHUNK_SIZE = Number(
-    process.env.VISITS_REFRESH_CHUNK_SIZE ?? 500,
+    process.env.VISITS_REFRESH_CHUNK_SIZE ?? 100,
   );
 
   /**
@@ -453,10 +458,15 @@ export class ProcessCatalogBackfill {
    * GET /meli/items/visits?ids=... con hasta 500 ids, asi que el mismo trabajo
    * son ~2.500 pedidos y entra en una pasada de minutos.
    *
-   * Lo que el proxy no devuelva se omite en silencio a proposito: no se
-   * escribe un 0, porque un 0 escrito es indistinguible de "no tiene visitas"
-   * y pisaria el ultimo valor bueno. Al no tocarle el captured_at, la
-   * publicacion vuelve a entrar en la seleccion de la pasada siguiente.
+   * Lo que el proxy no devuelve se omite. Desde el arreglo del 25/11 el proxy
+   * ya omite del array los ids que Meli no midio, en vez de devolverlos con
+   * total 0, asi que un 0 que llega es un 0 real.
+   *
+   * La omision es frecuente y no significa "sin visitas": medido sobre 300
+   * publicaciones activas, 117 vinieron omitidas y 106 de esas tenian un valor
+   * real guardado. Es un fallo intermitente de Meli por publicacion. Al no
+   * tocarles el captured_at vuelven a entrar en la pasada siguiente, asi que
+   * cada pasada mide entre un 35% y un 60% y el resto se arrastra.
    */
   private async syncVisitsChunk(
     job: Job<CatalogBackfillVisitsChunkPayload>,
@@ -545,6 +555,17 @@ export class ProcessCatalogBackfill {
         return await this.meliHttpClient.get<T>(url, config);
       } catch (error) {
         if (attempt >= maxAttempts) {
+          throw error;
+        }
+
+        // Un 400 o un 404 no cambian por reintentar: el pedido esta mal o Meli
+        // no tiene el dato. Reintentar cuatro veces con backoff solo quema
+        // tiempo del worker. Desde el 25/11 el proxy responde 404 en el
+        // endpoint individual cuando Meli no midio la publicacion.
+        if (
+          error instanceof MeliApiError &&
+          (error.status === 400 || error.status === 404)
+        ) {
           throw error;
         }
 
