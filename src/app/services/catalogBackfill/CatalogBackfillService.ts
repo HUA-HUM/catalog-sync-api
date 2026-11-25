@@ -235,10 +235,25 @@ export class CatalogBackfillService {
     .map((status) => status.trim())
     .filter(Boolean);
 
+  /**
+   * Vencimiento por grupo. Meli mide ~20% de lo que se le pide y el techo son
+   * ~300 mediciones por minuto, asi que una pasada sobre las 1.181.339 activas
+   * tarda unas 69 horas. Estos numeros reparten ese presupuesto.
+   */
+  private static readonly VISITS_TIERS = {
+    newWithinDays: Number(process.env.VISITS_TIER_NEW_WITHIN_DAYS ?? 30),
+    newStaleAfterDays: Number(process.env.VISITS_TIER_NEW_STALE_DAYS ?? 1),
+    visitedStaleAfterDays: Number(
+      process.env.VISITS_TIER_VISITED_STALE_DAYS ?? 4,
+    ),
+    restStaleAfterDays: Number(process.env.VISITS_TIER_REST_STALE_DAYS ?? 14),
+  };
+
   async enqueueVisitsRefresh(params: {
     staleAfterDays?: number;
     limit?: number;
     statuses?: string[];
+    tiers?: typeof CatalogBackfillService.VISITS_TIERS | null;
   }) {
     const runId = `catalog-visits-refresh-${Date.now()}`;
     const staleAfterDays =
@@ -259,6 +274,11 @@ export class CatalogBackfillService {
         staleAfterDays,
         limit: params.limit,
         statuses,
+        // null desactiva los grupos a proposito (umbral plano, uso manual).
+        tiers:
+          params.tiers === null
+            ? undefined
+            : (params.tiers ?? CatalogBackfillService.VISITS_TIERS),
       },
       {
         jobId: `${runId}-enqueue`,

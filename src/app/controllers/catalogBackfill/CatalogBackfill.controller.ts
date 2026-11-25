@@ -135,19 +135,22 @@ export class CatalogBackfillController {
   @Post('visits/refresh')
   @ApiOperation({
     summary: 'Encola visitas faltantes o vencidas por antiguedad',
+    description:
+      'Sin staleAfterDays usa los vencimientos por grupo, igual que la pasada diaria: las recien creadas cada 1 dia, las que ya tienen visitas cada 4, y el resto cada 14. Pasando staleAfterDays se usa ese umbral plano para todas, que sirve para una recuperacion puntual.',
   })
   @ApiBody({
     schema: {
       example: {
-        staleAfterDays: 4,
         limit: 50000,
       },
     },
   })
   refreshVisits(@Body() body: RefreshVisitsDto) {
     return this.service.enqueueVisitsRefresh({
-      staleAfterDays: body.staleAfterDays,
-      limit: body.limit,
+      staleAfterDays: body?.staleAfterDays,
+      limit: body?.limit,
+      // Un staleAfterDays explicito significa "quiero un umbral plano".
+      tiers: body?.staleAfterDays ? null : undefined,
     });
   }
 

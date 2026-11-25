@@ -67,6 +67,12 @@ export type CatalogBackfillVisitsRefreshPayload = {
   staleAfterDays: number;
   limit?: number;
   statuses?: string[];
+  tiers?: {
+    newWithinDays: number;
+    newStaleAfterDays: number;
+    visitedStaleAfterDays: number;
+    restStaleAfterDays: number;
+  };
 };
 
 export type CatalogBackfillPayload =

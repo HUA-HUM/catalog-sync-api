@@ -35,10 +35,15 @@ export class CatalogRefreshCron {
    * 1.248.321 activas, en lotes de 100 contra el endpoint bulk del proxy.
    *
    * El bulk ahorra viajes entre nuestros servicios, no llamadas a Meli: Meli
-   * solo acepta un id por llamada, asi que el piso lo pone su limite de tasa.
-   * Medido con el proxy arreglado: ~1.300 publicaciones/min con un consumidor
-   * secuencial, y entre un 35% y un 60% de cada lote vuelve omitida y se
-   * arrastra a la pasada siguiente.
+   * solo acepta un id por llamada. Medido bajo carga sostenida, mide ~20% de
+   * lo que se le pide y el techo son ~300 mediciones por minuto, sin importar
+   * la concurrencia (268/min con 5 workers, 276/min con 1). A ese ritmo una
+   * pasada sobre todas las activas tarda unas 69 horas.
+   *
+   * Por eso la seleccion va por grupos y ordenada por prioridad: las recien
+   * creadas primero, despues las que ya tienen visitas, y por ultimo las
+   * 642.100 que no tienen ninguna. Si el presupuesto del dia no alcanza, lo
+   * que queda sin medir es lo que menos importa.
    */
   @Cron(process.env.VISITS_REFRESH_CRON ?? '0 3 * * *', {
     name: 'visits-refresh-daily',
@@ -63,7 +68,7 @@ export class CatalogRefreshCron {
     try {
       const result = await this.service.enqueueVisitsRefresh({});
       console.log(
-        `[CatalogRefreshCron] visitas encoladas run=${result.run_id} staleAfterDays=${result.stale_after_days} statuses=${result.statuses?.join('|')}`,
+        `[CatalogRefreshCron] visitas encoladas run=${result.run_id} statuses=${result.statuses?.join('|')}`,
       );
     } catch (error) {
       console.error('[CatalogRefreshCron] fallo la pasada de visitas', error);

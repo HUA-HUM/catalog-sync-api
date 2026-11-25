@@ -430,11 +430,12 @@ export class ProcessCatalogBackfill {
       staleAfterDays: payload.staleAfterDays,
       limit: payload.limit,
       statuses: payload.statuses,
+      tiers: payload.tiers,
     });
 
     await this.logJob(
       job,
-      `[visits-refresh] staleAfterDays=${payload.staleAfterDays} statuses=${payload.statuses?.join('|') ?? 'all'} selected=${items.length} limit=${payload.limit ?? 'none'}`,
+      `[visits-refresh] tiers=${payload.tiers ? `${payload.tiers.newStaleAfterDays}/${payload.tiers.visitedStaleAfterDays}/${payload.tiers.restStaleAfterDays}d` : `plano ${payload.staleAfterDays}d`} statuses=${payload.statuses?.join('|') ?? 'all'} selected=${items.length} limit=${payload.limit ?? 'none'}`,
     );
 
     const chunks = this.chunk(items, ProcessCatalogBackfill.VISITS_CHUNK_SIZE);

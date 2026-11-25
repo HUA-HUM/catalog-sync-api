@@ -6,6 +6,7 @@ import {
   MeliBulkProduct,
   MeliBulkProductAttribute,
   MeliBulkProductVariation,
+  VisitsRefreshTiers,
 } from 'src/core/adapters/postgres/catalog/IUpsertMeliCatalogRepository';
 import { POSTGRES_POOL } from 'src/app/modules/database/Database.module';
 
@@ -156,17 +157,26 @@ export class PostgresMeliCatalogRepository implements IUpsertMeliCatalogReposito
   }
 
   /**
-   * Publicaciones cuya captura de visitas ya vencio.
+   * Publicaciones cuya captura de visitas ya vencio, en orden de prioridad.
+   *
+   * Con `tiers` cada grupo tiene su propio vencimiento y el orden del
+   * resultado es por grupo: si el presupuesto del dia no alcanza para todo,
+   * lo que se mide es lo que importa y no lo primero que aparece.
+   *
+   * Los tres grupos salen de medir el catalogo:
+   *
+   *   - nuevas (231.633 activas creadas en 30 dias): tienen 0 visitas porque
+   *     nunca se midieron, no porque esten muertas. Van primero.
+   *   - con visitas (538.599): ya tienen trafico conocido.
+   *   - el resto (642.100, el 54% de las activas): ni una visita ni una venta.
+   *     Remedirlas cada 18 horas era el desperdicio principal.
+   *
+   * Sin `tiers` se usa `staleAfterDays` plano para todo, que es lo que hace el
+   * endpoint manual.
    *
    * `staleAfterDays` es double precision, no int, para poder pedir fracciones
-   * de dia. Con una pasada diaria a las 03:00 y un umbral de 1 dia exacto, una
-   * publicacion capturada ayer a las 03:30 todavia no llega a las 24 h y queda
-   * afuera: recien entra al dia siguiente, y la cobertura se va corriendo. Con
-   * 0.75 (18 h) entra siempre.
-   *
-   * `statuses` acota la pasada a los estados que interesan. Las 615.348
-   * publicaciones `closed` no reciben visitas, y dejarlas afuera baja la pasada
-   * diaria de 2.080.000 a 1.248.321 llamadas.
+   * de dia: con una pasada diaria a las 03:00 y umbral de 1 dia exacto, lo
+   * capturado ayer 03:30 no llega a las 24 h y se saltea un dia.
    *
    * Todos los parametros van casteados explicitamente. Un parametro sin tipo
    * dentro de la query es lo que rompio upsertProduct en octubre: Postgres no
@@ -177,35 +187,57 @@ export class PostgresMeliCatalogRepository implements IUpsertMeliCatalogReposito
     staleAfterDays: number;
     limit?: number;
     statuses?: string[];
+    tiers?: VisitsRefreshTiers;
   }): Promise<
     {
       sellerId: number;
       itemId: string;
     }[]
   > {
+    const tiers = params.tiers;
+
     const result = await this.pool.query<{
       seller_id: number;
       item_id: string;
     }>(
       `
-      SELECT i.seller_id, i.item_id
-      FROM meli_items i
-      LEFT JOIN meli_item_visits_current v
-        ON v.seller_id = i.seller_id
-       AND v.item_id = i.item_id
-      WHERE i.sync_status = 'synced'
-        AND ($2::text[] IS NULL OR i.status = ANY($2::text[]))
-        AND (
-          v.item_id IS NULL
-          OR v.captured_at <= now() - ($1::double precision * interval '1 day')
-        )
-      ORDER BY v.captured_at ASC NULLS FIRST, i.item_id ASC
+      WITH clasificadas AS (
+        SELECT i.seller_id,
+               i.item_id,
+               v.captured_at,
+               CASE
+                 WHEN $4::double precision IS NULL THEN 2
+                 WHEN i.date_created > now() - ($4::double precision * interval '1 day') THEN 1
+                 WHEN COALESCE(v.total_visits, 0) > 0 THEN 2
+                 ELSE 3
+               END AS tier
+        FROM meli_items i
+        LEFT JOIN meli_item_visits_current v
+          ON v.seller_id = i.seller_id
+         AND v.item_id = i.item_id
+        WHERE i.sync_status = 'synced'
+          AND ($2::text[] IS NULL OR i.status = ANY($2::text[]))
+      )
+      SELECT seller_id, item_id
+      FROM clasificadas
+      WHERE captured_at IS NULL
+         OR captured_at <= now() - (
+              CASE tier
+                WHEN 1 THEN COALESCE($5::double precision, $1::double precision)
+                WHEN 2 THEN COALESCE($6::double precision, $1::double precision)
+                ELSE COALESCE($7::double precision, $1::double precision)
+              END * interval '1 day')
+      ORDER BY tier ASC, captured_at ASC NULLS FIRST, item_id ASC
       LIMIT $3::bigint
       `,
       [
         params.staleAfterDays,
         params.statuses?.length ? params.statuses : null,
         params.limit ?? null,
+        tiers?.newWithinDays ?? null,
+        tiers?.newStaleAfterDays ?? null,
+        tiers?.visitedStaleAfterDays ?? null,
+        tiers?.restStaleAfterDays ?? null,
       ],
     );
 
@@ -215,15 +247,6 @@ export class PostgresMeliCatalogRepository implements IUpsertMeliCatalogReposito
     }));
   }
 
-  /**
-   * Hora de la ultima captura de visitas, para vigilar el recolector.
-   *
-   * Lee meli_item_visits_current y no meli_item_visit_snapshots a proposito.
-   * El dato es el mismo (las dos se escriben en la misma llamada), pero
-   * snapshots tiene 36M filas y su indice arranca por seller_id, asi que un
-   * max(captured_at) ahi es un scan de 5,5 s. Sobre current son 395 ms. Esto
-   * esta pensado para que lo consulte un monitor cada pocos minutos.
-   */
   async getVisitsCollectorStatus(): Promise<{
     lastCaptureAt: Date | null;
     secondsSinceLastCapture: number | null;

@@ -106,6 +106,25 @@ export type MeliCatalogSyncAudit = {
   }[];
 };
 
+/**
+ * Cada cuanto se remide cada grupo de publicaciones.
+ *
+ * Meli mide solo ~20% de lo que se le pide y el techo real son ~300
+ * mediciones por minuto, asi que una pasada sobre las 1.181.339 activas
+ * tarda unas 69 horas y no entra en el dia. En vez de medir todo mal, se mide
+ * seguido lo que importa.
+ */
+export type VisitsRefreshTiers = {
+  /** Antiguedad hasta la que una publicacion cuenta como nueva. */
+  newWithinDays: number;
+  /** Nuevas: recien creadas, todavia sin historial de visitas. */
+  newStaleAfterDays: number;
+  /** Con visitas registradas. */
+  visitedStaleAfterDays: number;
+  /** El resto: sin visitas y ya no nuevas. */
+  restStaleAfterDays: number;
+};
+
 export interface IUpsertMeliCatalogRepository {
   upsertProducts(products: MeliBulkProduct[]): Promise<void>;
   findItemsBySkus(skus: string[]): Promise<
@@ -141,6 +160,7 @@ export interface IUpsertMeliCatalogRepository {
     staleAfterDays: number;
     limit?: number;
     statuses?: string[];
+    tiers?: VisitsRefreshTiers;
   }): Promise<
     {
       sellerId: number;
